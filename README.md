@@ -6,9 +6,39 @@ A small, dependency-free Node.js workflow runtime for LLM-driven development wor
 
 The CLI is the workflow runtime and state authority. The LLM is the executor and decision-maker.
 
+The protocol is intentionally loop-based: **`next` gets an action, the LLM executes it, `result` reports completion, and `next` asks the CLI what happens next.**
+
 ```text
-LLM -> next -> CLI -> Action -> LLM executes Skill
-LLM -> result -> CLI -> State/Transition -> LLM
+                 ┌──────────────┐
+                 │     LLM      │
+                 └──────┬───────┘
+                        │
+                 1. next
+                        ▼
+                 ┌──────────────┐
+                 │     CLI      │
+                 │ State Engine │
+                 └──────┬───────┘
+                        │ Action
+                        ▼
+                 ┌──────────────┐
+                 │ LLM executes │
+                 │ Skill / Work │
+                 └──────┬───────┘
+                        │
+                 2. result
+                        ▼
+                 ┌──────────────┐
+                 │     CLI      │
+                 │ update state │
+                 └──────┬───────┘
+                        │
+                 3. next
+                        ▼
+                 ┌──────────────┐
+                 │ next action  │
+                 │ or approval  │
+                 └──────────────┘
 ```
 
 ## Commands
@@ -16,13 +46,47 @@ LLM -> result -> CLI -> State/Transition -> LLM
 ```bash
 dev-workflow init --name add-modal --request "Add a reusable Modal component"
 dev-workflow next --id add-modal --json
-dev-workflow result --id add-modal --action ACTION_ID --status success --artifact .dev/workflows/add-modal/artifacts/specify.md
+
+dev-workflow result \
+  --id add-modal \
+  --action ACTION_ID \
+  --status success \
+  --artifact .dev/workflows/add-modal/artifacts/specify.md
+
+dev-workflow next --id add-modal --json
+
 dev-workflow approve --id add-modal
+
 dev-workflow revise --id add-modal --feedback "Support ESC to close"
 dev-workflow retry --id add-modal
 dev-workflow status --id add-modal --json
 dev-workflow resume --id add-modal
 ```
+
+### LLM execution loop
+
+```text
+next
+  ↓
+workflow.action
+  ↓
+LLM executes skill
+  ↓
+result
+  ↓
+workflow.result.accepted
+  ↓
+next
+  ↓
+┌──────────────────────┐
+│ waiting_approval     │ → approve / revise
+│ failed               │ → retry
+│ ready                │ → workflow.action
+│ completed            │ → workflow.completed
+└──────────────────────┘
+```
+
+`result` does **not** directly advance to the next stage. It only records what the LLM completed. The LLM then calls `next` again, and the CLI decides whether the workflow needs approval, retry, or the next executable stage.
 
 State is stored project-locally under `.dev/workflows/<workflow-id>/`.
 
