@@ -1,0 +1,16 @@
+{
+  "name": "dev-workflow-cli",
+  "version": "0.1.0",
+  "private": false,
+  "description": "CLI-driven LLM development workflow runtime",
+  "type": "commonjs",
+  "bin": {
+    "dev-workflow": "bin/dev-workflow.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
