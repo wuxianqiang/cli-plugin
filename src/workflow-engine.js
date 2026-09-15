@@ -45,7 +45,7 @@ class WorkflowEngine {
         artifact: current.artifact,
         actions: {
           approve: { command: `dev-workflow approve --id ${state.workflowId}` },
-          revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "..."` }
+          revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "<user-feedback>"` }
         }
       };
     }
@@ -74,9 +74,11 @@ class WorkflowEngine {
 
     transition(state, 'next');
     const execution = getExecutionConfig(stage);
+    const actionId = `action_${randomUUID()}`;
+    const artifactPath = `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`;
     const action = {
       type: 'workflow.action',
-      id: `action_${randomUUID()}`,
+      id: actionId,
       workflowId: state.workflowId,
       stage,
       action: 'execute_skill',
@@ -88,14 +90,15 @@ class WorkflowEngine {
         feedback: current.feedback
       },
       expectedOutput: {
-        artifact: `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`,
+        artifact: artifactPath,
         result: {
           status: 'success | failed',
-          artifact: `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`
+          artifact: artifactPath
         }
       },
       completion: {
-        command: `dev-workflow result --id ${state.workflowId} --action ACTION_ID --status success --artifact .dev/workflows/${state.workflowId}/artifacts/${stage}.md`
+        command: `dev-workflow result --id ${state.workflowId} --action ${actionId} --status success --artifact ${artifactPath}`,
+        failureCommand: `dev-workflow result --id ${state.workflowId} --action ${actionId} --status failed`
       }
     };
     state.currentAction = { id: action.id, stage, attempt: current.attempt, execution };
@@ -126,18 +129,18 @@ class WorkflowEngine {
     transition(state, event, payload);
     this.store.writeState(state);
     this.store.appendHistory({ type: `workflow.${event}`, workflowId: state.workflowId, stage: state.currentStage, ...payload });
-    return { type: 'workflow.transition', workflowId: state.workflowId, event, currentStage: state.currentStage, status: state.status === 'completed' ? 'completed' : state.stages[state.currentStage].status };
+    return { type: 'workflow.transition', workflowId: state.workflowId, event, currentStage: state.currentStage, status: state.status === 'completed' ? 'completed' : state.stages[state.currentStage].status, next: { command: `dev-workflow next --id ${state.workflowId}` } };
   }
   resume(args) {
     const state = this.load(args);
-    return { type: 'workflow.resumed', workflowId: state.workflowId, currentStage: state.currentStage, status: state.stages[state.currentStage].status, next: `dev-workflow next --id ${state.workflowId}` };
+    return { type: 'workflow.resumed', workflowId: state.workflowId, currentStage: state.currentStage, status: state.stages[state.currentStage].status, next: { command: `dev-workflow next --id ${state.workflowId}` } };
   }
   format(result) {
     if (result.type === 'workflow.action') {
       const execution = result.execution.strategy === 'parallel'
         ? `subagent/${result.execution.strategy}: ${result.execution.agents.join(', ')}`
         : `${result.execution.mode}/${result.execution.strategy}`;
-      return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nExecution: ${execution}\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}\n\n${result.completion.command.replace('ACTION_ID', result.id)}`;
+      return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nExecution: ${execution}\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}\n\nSuccess: ${result.completion.command}\nFailure: ${result.completion.failureCommand}`;
     }
     if (result.type === 'workflow.approval_required') {
       return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\n\nApprove: ${result.actions.approve.command}\nRevise: ${result.actions.revise.command}`;
