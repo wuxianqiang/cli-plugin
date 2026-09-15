@@ -53,3 +53,60 @@ test('result tells the LLM to call next so the CLI remains the workflow driver',
   assert.equal(approval.actions.approve.command, 'dev-workflow approve --id demo');
   assert.equal(approval.actions.revise.command, 'dev-workflow revise --id demo --feedback "..."');
 });
+
+test('workflow action declares direct execution for lightweight skills', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+
+  await engine.run({ command: 'init', name: 'demo', request: 'Add Modal' });
+  const action = await engine.run({ command: 'next', id: 'demo' });
+
+  assert.equal(action.execution.mode, 'direct');
+  assert.equal(action.execution.strategy, 'single');
+  assert.equal(action.execution.agent, null);
+});
+
+test('workflow action declares subagent execution for context-heavy skills', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+
+  await engine.run({ command: 'init', name: 'demo', request: 'Add Modal' });
+  const state = await engine.run({ command: 'status', id: 'demo' });
+  state.currentStage = 'implement';
+  state.stages.specify.status = 'completed';
+  state.stages.design.status = 'completed';
+  state.stages.tasks.status = 'completed';
+  state.stages.implement.status = 'ready';
+  engine.store.writeState(state);
+
+  const action = await engine.run({ command: 'next', id: 'demo' });
+
+  assert.equal(action.execution.mode, 'subagent');
+  assert.equal(action.execution.strategy, 'single');
+  assert.equal(action.execution.agent.name, 'implement-agent');
+});
+
+test('review action declares parallel subagent execution', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+
+  await engine.run({ command: 'init', name: 'demo', request: 'Review Modal' });
+  const state = await engine.run({ command: 'status', id: 'demo' });
+  state.currentStage = 'review';
+  for (const stage of ['specify', 'design', 'tasks', 'implement']) {
+    state.stages[stage].status = 'completed';
+  }
+  state.stages.review.status = 'ready';
+  engine.store.writeState(state);
+
+  const action = await engine.run({ command: 'next', id: 'demo' });
+
+  assert.equal(action.execution.mode, 'subagent');
+  assert.equal(action.execution.strategy, 'parallel');
+  assert.deepEqual(action.execution.agents, [
+    'security-review',
+    'performance-review',
+    'architecture-review',
+    'stability-review'
+  ]);
+});
