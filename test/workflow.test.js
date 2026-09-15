@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
 const { initialState, transition } = require('../src/workflow');
+const { WorkflowStore } = require('../src/workflow-store');
+const { WorkflowEngine } = require('../src/workflow-engine');
 
 test('workflow progresses specify -> design after approval', () => {
   const state = initialState('demo', 'Add Modal');
@@ -25,16 +30,26 @@ test('failed stage can retry', () => {
   assert.equal(state.stages.specify.status, 'ready');
 });
 
-test('successful result requires approval before the next stage can run', () => {
-  const state = initialState('demo', 'Add Modal');
-  transition(state, 'next');
-  state.currentAction = { id: 'action_1' };
-  transition(state, 'result', { actionId: 'action_1', status: 'success', artifact: 'spec.md' });
+test('result tells the LLM to call next so the CLI remains the workflow driver', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const store = new WorkflowStore(root);
+  const engine = new WorkflowEngine(store);
 
-  assert.equal(state.stages.specify.status, 'waiting_approval');
-  assert.throws(() => transition(state, 'next'), /Stage specify is not ready/);
+  await engine.run({ command: 'init', name: 'demo', request: 'Add Modal' });
+  const action = await engine.run({ command: 'next', id: 'demo' });
+  const result = await engine.run({
+    command: 'result',
+    id: 'demo',
+    action: action.id,
+    status: 'success',
+    artifact: '.dev/workflows/demo/artifacts/specify.md'
+  });
 
-  transition(state, 'approve');
-  assert.equal(state.currentStage, 'design');
-  assert.equal(state.stages.design.status, 'ready');
+  assert.equal(result.status, 'waiting_approval');
+  assert.equal(result.next.command, 'dev-workflow next --id demo');
+
+  const approval = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(approval.type, 'workflow.approval_required');
+  assert.equal(approval.actions.approve.command, 'dev-workflow approve --id demo');
+  assert.equal(approval.actions.revise.command, 'dev-workflow revise --id demo --feedback "..."');
 });
