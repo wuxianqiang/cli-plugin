@@ -1,6 +1,6 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
-const { initialState, transition, STAGES } = require('./workflow');
+const { initialState, transition, STAGES, getExecutionConfig } = require('./workflow');
 
 class WorkflowEngine {
   constructor(store) { this.store = store; }
@@ -73,6 +73,7 @@ class WorkflowEngine {
     }
 
     transition(state, 'next');
+    const execution = getExecutionConfig(stage);
     const action = {
       type: 'workflow.action',
       id: `action_${randomUUID()}`,
@@ -80,15 +81,26 @@ class WorkflowEngine {
       stage,
       action: 'execute_skill',
       skill: { name: stage },
-      input: { request: state.request, artifacts: state.artifacts, feedback: current.feedback },
-      expectedOutput: { artifact: `.dev/workflows/${state.workflowId}/artifacts/${stage}.md` },
+      execution,
+      input: {
+        request: state.request,
+        artifacts: state.artifacts,
+        feedback: current.feedback
+      },
+      expectedOutput: {
+        artifact: `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`,
+        result: {
+          status: 'success | failed',
+          artifact: `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`
+        }
+      },
       completion: {
         command: `dev-workflow result --id ${state.workflowId} --action ACTION_ID --status success --artifact .dev/workflows/${state.workflowId}/artifacts/${stage}.md`
       }
     };
-    state.currentAction = { id: action.id, stage, attempt: current.attempt };
+    state.currentAction = { id: action.id, stage, attempt: current.attempt, execution };
     this.store.writeState(state);
-    this.store.appendHistory({ type: 'workflow.action', workflowId: state.workflowId, actionId: action.id, stage });
+    this.store.appendHistory({ type: 'workflow.action', workflowId: state.workflowId, actionId: action.id, stage, execution });
     return action;
   }
   result(args) {
@@ -122,7 +134,10 @@ class WorkflowEngine {
   }
   format(result) {
     if (result.type === 'workflow.action') {
-      return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}\n\n${result.completion.command.replace('ACTION_ID', result.id)}`;
+      const execution = result.execution.strategy === 'parallel'
+        ? `subagent/${result.execution.strategy}: ${result.execution.agents.join(', ')}`
+        : `${result.execution.mode}/${result.execution.strategy}`;
+      return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nExecution: ${execution}\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}\n\n${result.completion.command.replace('ACTION_ID', result.id)}`;
     }
     if (result.type === 'workflow.approval_required') {
       return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\n\nApprove: ${result.actions.approve.command}\nRevise: ${result.actions.revise.command}`;
