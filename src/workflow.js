@@ -1,6 +1,36 @@
 'use strict';
+
 const STAGES = ['specify', 'design', 'tasks', 'implement', 'review'];
 const VALID_STAGE_STATUSES = ['pending', 'ready', 'running', 'completed', 'failed', 'waiting_approval'];
+
+// The CLI declares how a stage should be executed; it never dispatches agents itself.
+// This keeps workflow/state management separate from LLM orchestration.
+const EXECUTION_CONFIG = {
+  specify: { mode: 'direct', strategy: 'single', agent: null },
+  design: { mode: 'direct', strategy: 'single', agent: null },
+  tasks: { mode: 'direct', strategy: 'single', agent: null },
+  implement: {
+    mode: 'subagent',
+    strategy: 'single',
+    agent: { name: 'implement-agent', role: 'implementation' }
+  },
+  review: {
+    mode: 'subagent',
+    strategy: 'parallel',
+    agents: [
+      'security-review',
+      'performance-review',
+      'architecture-review',
+      'stability-review'
+    ]
+  }
+};
+
+function getExecutionConfig(stage) {
+  const config = EXECUTION_CONFIG[stage];
+  if (!config) throw new Error(`Unknown stage execution config: ${stage}`);
+  return JSON.parse(JSON.stringify(config));
+}
 
 function initialState(workflowId, request) {
   const stages = Object.fromEntries(STAGES.map((stage, index) => [stage, {
@@ -45,4 +75,5 @@ function transition(state, event, payload = {}) {
   }
   throw Object.assign(new Error(`Unknown transition: ${event}`), { code: 'UNKNOWN_TRANSITION' });
 }
-module.exports = { STAGES, initialState, transition };
+
+module.exports = { STAGES, VALID_STAGE_STATUSES, EXECUTION_CONFIG, getExecutionConfig, initialState, transition };
