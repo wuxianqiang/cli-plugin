@@ -24,3 +24,17 @@ test('failed stage can retry', () => {
   transition(state, 'retry');
   assert.equal(state.stages.specify.status, 'ready');
 });
+
+test('successful result requires approval before the next stage can run', () => {
+  const state = initialState('demo', 'Add Modal');
+  transition(state, 'next');
+  state.currentAction = { id: 'action_1' };
+  transition(state, 'result', { actionId: 'action_1', status: 'success', artifact: 'spec.md' });
+
+  assert.equal(state.stages.specify.status, 'waiting_approval');
+  assert.throws(() => transition(state, 'next'), /Stage specify is not ready/);
+
+  transition(state, 'approve');
+  assert.equal(state.currentStage, 'design');
+  assert.equal(state.stages.design.status, 'ready');
+});
