@@ -13,12 +13,65 @@ The CLI is the workflow runtime and state authority. You are responsible for int
 
 **Do not implement workflow state transitions yourself.** The CLI owns stage state, approval, retry, and progression.
 
+## CLI Command Protocol
+
+The CLI is responsible for constructing workflow commands with all workflow-generated values already resolved.
+
+**The Orchestrator must not construct, concatenate, substitute, or infer CLI workflow arguments.**
+
+When the CLI response contains a `command` field, treat that command as the authoritative executable command and execute it exactly as returned.
+
+For example, when `workflow.action` returns:
+
+```json
+{
+  "id": "action_123",
+  "workflowId": "add-modal",
+  "completion": {
+    "command": "dev-workflow result --id add-modal --action action_123 --status success --artifact .dev/workflows/add-modal/artifacts/specify.md",
+    "failureCommand": "dev-workflow result --id add-modal --action action_123 --status failed"
+  }
+}
+```
+
+The Orchestrator executes the returned command directly. It must **not** reconstruct it from `workflowId`, `id`, `artifact`, or any other response field.
+
+### Command sources
+
+Use commands only from the CLI response:
+
+| Situation | Command source |
+|---|---|
+| Start/continue workflow | `workflow.action` or `workflow.result.accepted` command fields |
+| Record successful execution | `workflow.action.completion.command` |
+| Record failed execution | `workflow.action.completion.failureCommand` |
+| Approval | `workflow.approval_required.actions.approve.command` |
+| Revision | `workflow.approval_required.actions.revise.command` |
+| Retry | `workflow.retry_required.actions.retry.command` |
+| Continue after transition | `next.command` when returned by the CLI |
+
+The Orchestrator may inspect other fields to decide **how to execute the work**, but those fields are not used to construct CLI commands.
+
+### Exception: user-provided values
+
+Some commands require information that does not exist until the user responds. For example, a revision requires user feedback.
+
+The CLI therefore returns the command shape with a clearly marked user-input slot:
+
+```text
+dev-workflow revise --id add-modal --feedback "<user-feedback>"
+```
+
+In this case, the Orchestrator may replace **only the explicit user-input slot** with the user's actual feedback. It must not alter any CLI-generated workflow identifier, stage identifier, action identifier, or artifact path.
+
+No workflow-generated placeholder such as `<workflow-id>`, `<action-id>`, or `<artifact-path>` should appear in normal CLI-generated execution commands.
+
 ## Core Loop
 
 Always follow this loop:
 
 ```text
-1. dev-workflow next --id <workflow-id> --json
+1. dev-workflow next --id <initial-workflow-id> --json
                 ↓
 2. inspect workflow result
                 ↓
@@ -26,10 +79,12 @@ Always follow this loop:
                 ↓
 4. persist the stage artifact
                 ↓
-5. dev-workflow result --id <workflow-id> --action <action-id> --status <success|failed> --artifact <path>
+5. execute the exact CLI command returned by the workflow action
                 ↓
-6. call dev-workflow next again
+6. call the exact `next` command returned by the CLI
 ```
+
+The initial workflow lookup may require the workflow ID supplied by the user or the surrounding execution context. After that, all workflow-generated command arguments must come from CLI-generated commands.
 
 `result` does not advance the workflow. `next` remains the only source of truth for what happens next.
 
@@ -38,14 +93,16 @@ Always follow this loop:
 Prefer JSON output so the orchestration decision is based on structured data:
 
 ```bash
-dev-workflow next --id <workflow-id> --json
+dev-workflow next --id <initial-workflow-id> --json
 ```
 
 If the CLI is not globally installed, invoke the repository's executable directly, for example:
 
 ```bash
-node /path/to/cli-plugin/bin/dev-workflow.js next --id <workflow-id> --json
+node /path/to/cli-plugin/bin/dev-workflow.js next --id <initial-workflow-id> --json
 ```
+
+Once the CLI returns a command, execute the returned command rather than recreating an equivalent command manually.
 
 Never infer the next stage from the previous stage. Always ask the CLI.
 
@@ -64,8 +121,10 @@ Read:
 - `input`
 - `expectedOutput`
 - `id`
+- `completion.command`
+- `completion.failureCommand`
 
-Then route according to `execution`.
+The first fields determine **what work to execute**. The command fields determine **how to report the result to the CLI**.
 
 ### Direct execution
 
@@ -203,26 +262,21 @@ Main Context
 
 ## Result Protocol
 
-After execution succeeds, call:
+After execution succeeds, execute the exact command returned in:
 
-```bash
-dev-workflow result \
-  --id <workflow-id> \
-  --action <action-id> \
-  --status success \
-  --artifact <artifact-path>
+```text
+workflow.action.completion.command
 ```
 
-After execution fails:
+Do not reconstruct it from the action ID, workflow ID, or artifact path.
 
-```bash
-dev-workflow result \
-  --id <workflow-id> \
-  --action <action-id> \
-  --status failed
+After execution fails, execute the exact command returned in:
+
+```text
+workflow.action.completion.failureCommand
 ```
 
-Do not call `approve`, `revise`, or `retry` immediately after `result` unless the user explicitly asks for that action. Call `next` first and follow the CLI response.
+Do not call `approve`, `revise`, or `retry` immediately after reporting `result` unless the user explicitly asks for that action. Execute the CLI-provided continuation command and follow the returned workflow response.
 
 ## `workflow.result.accepted`
 
@@ -232,12 +286,12 @@ When `result` returns:
 {
   "type": "workflow.result.accepted",
   "next": {
-    "command": "dev-workflow next --id <workflow-id>"
+    "command": "dev-workflow next --id add-modal"
   }
 }
 ```
 
-Immediately call the provided `next` command unless execution must stop for an external reason.
+Execute the exact `next.command` returned by the CLI unless execution must stop for an external reason.
 
 ## `workflow.approval_required`
 
@@ -248,15 +302,15 @@ Present the artifact and ask the user whether to:
 - approve
 - revise
 
-If the user approves, execute the CLI-provided approve command, then call `next`.
+If the user approves, execute the exact CLI-provided approve command, then follow the CLI response.
 
-If the user requests changes, execute the CLI-provided revise command with concise feedback, then call `next`.
+If the user requests changes, use the CLI-provided revise command and replace only its explicit user-feedback slot with the user's feedback, then follow the CLI response.
 
 ## `workflow.retry_required`
 
 A failed stage is waiting for retry.
 
-Do not silently retry indefinitely. If retry is appropriate, execute the CLI-provided retry command, then call `next`.
+Do not silently retry indefinitely. If retry is appropriate, execute the exact CLI-provided retry command, then follow the CLI response.
 
 If the failure requires user intervention, explain the failure instead.
 
@@ -321,6 +375,7 @@ For review workflows, preserve the source agent on every finding so aggregation 
 ## Error Handling
 
 - Invalid or missing `workflow.action`: stop and report the malformed action.
+- Missing CLI command in a state that requires an action: stop; do not reconstruct the command.
 - Unknown `execution.mode`: stop; do not guess.
 - Unknown `execution.strategy`: stop; do not silently fall back to direct execution.
 - Subagent failure: collect the failure result and mark the stage failed unless the Skill explicitly defines a recoverable partial-result policy.
@@ -331,6 +386,8 @@ For review workflows, preserve the source agent on every finding so aggregation 
 
 The Orchestrator must not:
 
+- Construct `dev-workflow result --id ... --action ...` commands itself.
+- Replace workflow-generated values in CLI commands.
 - Decide that `specify` is followed by `design` without asking the CLI.
 - Mutate `.dev/workflows/<id>/state.json` directly.
 - Reimplement CLI transition rules.
