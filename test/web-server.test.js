@@ -70,3 +70,38 @@ test('browser approval changes shared state so wait can resume', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('docs comments transition waiting approval back to ready and are injected into next action', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-comments-'));
+  const store = new WorkflowStore(root);
+  store.create(initialState('comments-test', 'add modal'));
+  const engine = new WorkflowEngine(store);
+  const server = new WorkflowWebServer(store, engine, { port: 0 });
+  const address = await server.start();
+
+  try {
+    const action = await engine.run({ command: 'next', id: 'comments-test' });
+    fs.mkdirSync(path.join(root, '.dev/workflows/comments-test/artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dev/workflows/comments-test/artifacts/specify.md'), '# Specify\nPlease add mobile handling.');
+    await engine.run({ command: 'result', id: 'comments-test', action: action.id, status: 'success', artifact: '.dev/workflows/comments-test/artifacts/specify.md' });
+
+    await fetch(`${address.url}/api/workflows/comments-test/annotations`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'change', content: '补充移动端处理', stage: 'specify', target: { quote: 'Please add mobile handling.', start: 10, end: 36 } })
+    });
+    const decision = await fetch(`${address.url}/api/workflows/comments-test/decisions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'apply-comments', stage: 'specify' })
+    });
+    assert.equal(decision.status, 201);
+    assert.equal(store.read('comments-test').stages.specify.status, 'ready');
+
+    const next = await engine.run({ command: 'next', id: 'comments-test' });
+    assert.equal(next.input.annotations.length, 1);
+    assert.equal(next.input.annotations[0].content, '补充移动端处理');
+    assert.match(next.input.feedback, /Apply the open Docs comments/);
+  } finally {
+    await server.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
