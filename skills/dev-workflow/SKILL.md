@@ -1,6 +1,6 @@
 ---
 name: dev-workflow
-description: Orchestrates the CLI-driven development workflow by reading workflow actions, routing them to direct Skills or subagents, collecting structured results, and advancing the CLI state machine.
+description: Orchestrates the CLI-driven development workflow by reading workflow actions, routing them to direct Skills or subagents, collecting structured results, and advancing the CLI state machine with an optional local browser workspace for human-in-the-loop interaction.
 ---
 
 # Dev Workflow Orchestrator
@@ -10,6 +10,31 @@ description: Orchestrates the CLI-driven development workflow by reading workflo
 You are the orchestration layer between the `dev-workflow` CLI and the LLM execution environment.
 
 The CLI is the workflow runtime and state authority. It owns stage state, approval, retry, and progression. **Do not implement workflow state transitions yourself.**
+
+## Browser Workflow Workspace
+
+The workflow has an optional local Web UI. Use it as the preferred human-in-the-loop surface when available.
+
+Start it once after creating or resuming a workflow:
+
+```bash
+dev-workflow web --id <workflow-id>
+```
+
+The command prints a local URL. If the current environment supports opening a browser, it opens the URL automatically. The server remains running until the process receives SIGINT/SIGTERM. When you need the Agent to continue in the same terminal, launch the command in the background using the host shell.
+
+The browser workspace displays:
+
+- the complete SDD timeline: Specify → Design → Tasks → Implement → Review;
+- the current stage and stage status;
+- generated stage artifacts;
+- human annotations attached to selected document text;
+- human decisions and approval actions;
+- live workflow updates through Server-Sent Events.
+
+The browser is a presentation and interaction layer. **Workflow state remains owned by the CLI/state store.**
+
+For document stages, users can select text in the artifact preview and add a custom annotation. An annotation is persisted separately from the Markdown artifact under the workflow directory, so Agent-generated documents remain clean.
 
 ## Core Loop
 
@@ -25,8 +50,8 @@ execute Skill / Subagent
 write artifact
  ↓
 [interactive stage?]
- ├─ Specify/Design → AskUserQuestion → clarify → next → same Action
- └─ Review → findings → AskUserQuestion → fix/skip → apply selected fixes → re-review
+ ├─ Specify/Design → Human decision → clarify → next → same Action
+ └─ Review → findings → Human decision → fix/skip → apply selected fixes → re-review
  ↓
 final artifact
  ↓
@@ -36,7 +61,7 @@ execute CLI-provided next.command
  ↓
 workflow.approval_required
  ↓
-AskUserQuestion  ← MANDATORY PAUSE
+Human approval in Browser or AskUserQuestion
  ↓
 approve OR revise
  ↓
@@ -46,6 +71,8 @@ next workflow.action
 ```
 
 **A successful Skill/Subagent execution never means the next stage may start automatically. Every stage requires explicit user approval.**
+
+When browser HITL is enabled, prefer the browser for artifact review and approval. `AskUserQuestion` remains the fallback for decisions that are easier or more appropriate to resolve in the conversation.
 
 ## CLI Command Protocol
 
@@ -119,14 +146,15 @@ When the action exposes:
 
 and the Skill discovers an unresolved decision:
 
-1. Call `AskUserQuestion`.
-2. Present concrete options whenever possible.
-3. Include a `Custom` option when the user may have another valid answer.
-4. Wait for the user's answer.
-5. Execute the exact CLI-generated `recordCommand`, replacing only its explicit user-input placeholders.
-6. Execute the returned `next.command`.
-7. The CLI will return the same `workflow.action`/Action ID for an interactive running stage.
-8. Continue the same Skill with the updated `input.clarification.decisions`.
+1. Prefer presenting the decision in the browser when the workflow Web UI is running.
+2. Otherwise call `AskUserQuestion`.
+3. Present concrete options whenever possible.
+4. Include a `Custom` option when the user may have another valid answer.
+5. Wait for the user's answer.
+6. Execute the exact CLI-generated `recordCommand`, replacing only its explicit user-input placeholders.
+7. Execute the returned `next.command`.
+8. The CLI will return the same `workflow.action`/Action ID for an interactive running stage.
+9. Continue the same Skill with the updated `input.clarification.decisions`.
 
 Do not call `workflow.result` while the interactive stage still has unresolved questions.
 
@@ -143,7 +171,7 @@ parallel review agents
         ↓
 aggregate findings
         ↓
-AskUserQuestion
+Human decision in Browser / AskUserQuestion
         ↓
 select findings to FIX
         ↓
@@ -156,7 +184,7 @@ focused verification
 re-run relevant review agents
         ↓
 new/unresolved findings?
-   ├─ yes → AskUserQuestion again
+   ├─ yes → Human decision again
    └─ no
         ↓
 final review.md
@@ -174,8 +202,6 @@ For Review:
 - Re-run relevant review agents after fixes.
 - Newly discovered findings also require an explicit user decision.
 - Only after all decisions and selected fixes are verified may Review return its final successful result.
-
-The Review Skill owns the content of the review decision and should call `AskUserQuestion` with finding IDs, severity, evidence, and recommended fixes. The Orchestrator owns execution of the CLI clarification command and workflow state progression.
 
 ## Skill Router
 
@@ -208,99 +234,8 @@ After a Skill or Subagent finishes its **complete** work:
 2. Execute the exact `workflow.action.completion.command` returned by the CLI on success, or `completion.failureCommand` on failure.
 3. Execute the exact continuation command returned by the CLI.
 4. Inspect the resulting workflow type.
+5. If the result is `workflow.approval_required`, leave the workflow paused until a human approves or revises it.
 
 For interactive stages, do **not** report success until their clarification/fix/review loop is complete.
 
-Do not manually call `approve` after `result`.
-
-## Mandatory approval gate
-
-When the CLI returns `workflow.approval_required`, this is a mandatory human-in-the-loop pause.
-
-Immediately use `AskUserQuestion`. Present:
-
-- completed stage
-- artifact path
-- concise result summary
-- `Approve and continue`
-- `Revise`
-
-Wait for the answer.
-
-### User chooses Approve
-
-1. Execute the exact `actions.approve.command` returned by the CLI.
-2. Inspect the CLI response.
-3. Execute the CLI-provided `next` command.
-4. Continue only when the CLI returns the next `workflow.action`.
-
-### User chooses Revise
-
-1. Collect revision feedback.
-2. Execute the CLI-provided `actions.revise.command`, replacing only its explicit user-feedback slot.
-3. Execute the returned `next` command.
-4. Re-run the current stage.
-
-**Never auto-approve. Never ask for approval and then continue without waiting for the answer.**
-
-## `workflow.result.accepted`
-
-Execute the exact `next.command` returned by the CLI. Do not assume what the next state is.
-
-## `workflow.retry_required`
-
-A failed stage is waiting for retry. Do not silently retry indefinitely. If retry is appropriate and authorized, execute the exact CLI-provided retry command and then follow the returned continuation command.
-
-## `workflow.completed`
-
-Stop. Do not call `next` again. Provide a concise summary based on completed artifacts.
-
-## `workflow.state`
-
-Treat it as state synchronization. Do not invent transitions. If safe, execute the CLI-provided continuation command.
-
-## Subagent Result Contract
-
-Return compact results such as:
-
-```json
-{
-  "agent": "security-review",
-  "status": "success | failed",
-  "summary": "<short summary>",
-  "findings": [],
-  "decisions": [],
-  "artifact": "<optional artifact path>"
-}
-```
-
-Never dump full Subagent reasoning into the Orchestrator context.
-
-## Error Handling
-
-- Missing or malformed `workflow.action`: stop and report it.
-- Missing required CLI command: stop; do not reconstruct it.
-- Unknown execution mode or strategy: stop; do not guess.
-- Failed required Subagent: normally mark the stage failed.
-- Missing required parallel agent: do not claim review completion.
-- Never fabricate artifacts or successful results.
-
-## Forbidden Behavior
-
-The Orchestrator must not:
-
-- construct workflow CLI commands itself
-- infer or mutate workflow IDs, action IDs, or artifact paths in CLI commands
-- infer stage progression
-- mutate `.dev/workflows/<id>/state.json` directly
-- automatically approve a stage
-- skip AskUserQuestion at an approval or review-decision gate
-- continue while waiting for user input
-- hide Subagent failures
-- dump full Subagent reasoning into the main context
-- treat an artifact path as proof that the artifact exists
-- continue after `workflow.completed`
-
-## Termination Rule
-
-Terminate only when the CLI returns `workflow.completed`, or when execution cannot safely continue and the failure is reported to the user.
+Do not manually call `approve` after `result` unless the user has explicitly approved the stage.
