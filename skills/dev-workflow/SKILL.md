@@ -24,6 +24,12 @@ execute Skill / Subagent
  ↓
 write artifact
  ↓
+[interactive stage?]
+ ├─ Specify/Design → AskUserQuestion → clarify → next → same Action
+ └─ Review → findings → AskUserQuestion → fix/skip → apply selected fixes → re-review
+ ↓
+final artifact
+ ↓
 execute CLI-provided completion.command
  ↓
 execute CLI-provided next.command
@@ -49,20 +55,7 @@ The Orchestrator must **not** construct, concatenate, substitute, or infer workf
 
 When a CLI response contains a `command` field, execute that command exactly as returned.
 
-Example:
-
-```json
-{
-  "completion": {
-    "command": "dev-workflow result --id add-modal --action action_123 --status success --artifact .dev/workflows/add-modal/artifacts/specify.md",
-    "failureCommand": "dev-workflow result --id add-modal --action action_123 --status failed"
-  }
-}
-```
-
-Execute those commands directly. Do not rebuild them from `workflowId`, `id`, or artifact paths.
-
-The only exception is an explicitly marked user-input slot, such as revision feedback. Replace only that slot with the user's actual input.
+The only exception is an explicitly marked user-input slot, such as a review clarification answer or revision feedback. Replace only that slot with the user's actual input.
 
 ## Starting a Workflow
 
@@ -74,11 +67,7 @@ dev-workflow next --id <initial-workflow-id> --json
 
 After that, prefer commands returned by the CLI. Never infer the next stage.
 
-If the CLI is not globally installed, use the repository executable directly, for example:
-
-```bash
-node /path/to/cli-plugin/bin/dev-workflow.js next --id <initial-workflow-id> --json
-```
+If the CLI is not globally installed, use the repository executable directly.
 
 ## `workflow.action`
 
@@ -91,6 +80,7 @@ Read:
 - `execution.agent` or `execution.agents`
 - `input`
 - `expectedOutput`
+- `clarification`
 - `completion.command`
 - `completion.failureCommand`
 
@@ -111,6 +101,81 @@ The agent should read relevant artifacts/files itself, perform the work, write d
 For `execution.mode=subagent` and `strategy=parallel`, dispatch every configured agent independently and in parallel when supported.
 
 Each agent should return a compact result. Aggregate the results into the stage artifact while preserving finding provenance.
+
+## Interactive Stage Protocol
+
+Some stages can pause **inside the same running Action** because the work cannot be completed without a user decision.
+
+When the action exposes:
+
+```json
+{
+  "clarification": {
+    "enabled": true,
+    "recordCommand": "dev-workflow clarify ..."
+  }
+}
+```
+
+and the Skill discovers an unresolved decision:
+
+1. Call `AskUserQuestion`.
+2. Present concrete options whenever possible.
+3. Include a `Custom` option when the user may have another valid answer.
+4. Wait for the user's answer.
+5. Execute the exact CLI-generated `recordCommand`, replacing only its explicit user-input placeholders.
+6. Execute the returned `next.command`.
+7. The CLI will return the same `workflow.action`/Action ID for an interactive running stage.
+8. Continue the same Skill with the updated `input.clarification.decisions`.
+
+Do not call `workflow.result` while the interactive stage still has unresolved questions.
+
+### Specify / Design
+
+Use this protocol for requirement or technical-design decisions that cannot be safely determined from project facts.
+
+### Review
+
+Review has a stronger decision loop:
+
+```text
+parallel review agents
+        ↓
+aggregate findings
+        ↓
+AskUserQuestion
+        ↓
+select findings to FIX
+        ↓
+unselected findings = SKIP
+        ↓
+implement selected fixes
+        ↓
+focused verification
+        ↓
+re-run relevant review agents
+        ↓
+new/unresolved findings?
+   ├─ yes → AskUserQuestion again
+   └─ no
+        ↓
+final review.md
+        ↓
+workflow.result
+```
+
+For Review:
+
+- Every finding must receive an explicit `fix` or `skip` decision.
+- Do not silently ignore findings.
+- Do not automatically fix every finding.
+- For selected findings, use the implementation capability/subagent to actually modify the repository.
+- Verify selected fixes before marking them fixed.
+- Re-run relevant review agents after fixes.
+- Newly discovered findings also require an explicit user decision.
+- Only after all decisions and selected fixes are verified may Review return its final successful result.
+
+The Review Skill owns the content of the review decision and should call `AskUserQuestion` with finding IDs, severity, evidence, and recommended fixes. The Orchestrator owns execution of the CLI clarification command and workflow state progression.
 
 ## Skill Router
 
@@ -137,59 +202,30 @@ Subagents exist partly to isolate context.
 
 ## Stage Completion Protocol
 
-After a Skill or Subagent finishes:
+After a Skill or Subagent finishes its **complete** work:
 
 1. Verify the expected artifact actually exists.
 2. Execute the exact `workflow.action.completion.command` returned by the CLI on success, or `completion.failureCommand` on failure.
 3. Execute the exact continuation command returned by the CLI.
 4. Inspect the resulting workflow type.
 
+For interactive stages, do **not** report success until their clarification/fix/review loop is complete.
+
 Do not manually call `approve` after `result`.
 
-### Mandatory approval gate
+## Mandatory approval gate
 
-When the CLI returns:
+When the CLI returns `workflow.approval_required`, this is a mandatory human-in-the-loop pause.
 
-```json
-{
-  "type": "workflow.approval_required",
-  "stage": "specify",
-  "artifact": ".dev/workflows/add-modal/artifacts/specify.md",
-  "actions": {
-    "approve": {
-      "command": "dev-workflow approve --id add-modal"
-    },
-    "revise": {
-      "command": "dev-workflow revise --id add-modal --feedback \"<user-feedback>\""
-    }
-  }
-}
-```
+Immediately use `AskUserQuestion`. Present:
 
-this is a **mandatory human-in-the-loop pause**.
-
-**Immediately use AskUserQuestion (or the host's equivalent user-question tool). Do not continue the workflow before receiving the user's answer.**
-
-The question must clearly present:
-
-- the completed stage
-- the artifact path
-- a concise summary of the result
+- completed stage
+- artifact path
+- concise result summary
 - `Approve and continue`
 - `Revise`
 
-Conceptually:
-
-```text
-Stage `specify` has completed.
-
-Artifact: .dev/workflows/add-modal/artifacts/specify.md
-Summary: The specification defines the scope and acceptance criteria.
-
-Choose an action:
-- Approve and continue
-- Revise
-```
+Wait for the answer.
 
 ### User chooses Approve
 
@@ -200,21 +236,16 @@ Choose an action:
 
 ### User chooses Revise
 
-1. Collect the user's revision feedback.
+1. Collect revision feedback.
 2. Execute the CLI-provided `actions.revise.command`, replacing only its explicit user-feedback slot.
-3. Inspect the CLI response.
-4. Execute the CLI-provided `next` command.
-5. Re-run the current stage using the new feedback.
+3. Execute the returned `next` command.
+4. Re-run the current stage.
 
 **Never auto-approve. Never ask for approval and then continue without waiting for the answer.**
 
 ## `workflow.result.accepted`
 
 Execute the exact `next.command` returned by the CLI. Do not assume what the next state is.
-
-## `workflow.approval_required`
-
-Mandatory pause. Ask the user with AskUserQuestion. Do not execute either approve or revise before the user answers.
 
 ## `workflow.retry_required`
 
@@ -263,8 +294,8 @@ The Orchestrator must not:
 - infer stage progression
 - mutate `.dev/workflows/<id>/state.json` directly
 - automatically approve a stage
-- skip AskUserQuestion at an approval gate
-- continue while waiting for user approval
+- skip AskUserQuestion at an approval or review-decision gate
+- continue while waiting for user input
 - hide Subagent failures
 - dump full Subagent reasoning into the main context
 - treat an artifact path as proof that the artifact exists
