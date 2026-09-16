@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { WorkflowStore } = require('../src/workflow-store');
 const { WorkflowEngine } = require('../src/workflow-engine');
 const { WorkflowWebServer } = require('../src/web-server');
@@ -12,6 +12,26 @@ function openBrowser(url) {
   if (platform === 'darwin') return execFile('open', [url]);
   if (platform === 'win32') return execFile('cmd', ['/c', 'start', '', url]);
   return execFile('xdg-open', [url]);
+}
+
+function webSessionAlive(session) {
+  if (!session?.pid) return false;
+  try { process.kill(session.pid, 0); return true; } catch { return false; }
+}
+
+function ensureWebWorkspace(workflowId, store) {
+  const session = store.readWebSession(workflowId);
+  if (webSessionAlive(session)) return { started: false, session };
+
+  if (session) store.clearWebSession(workflowId);
+  const child = spawn(process.execPath, [__filename, 'web', '--id', workflowId], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
+  child.unref();
+  return { started: true, pid: child.pid };
 }
 
 async function main() {
@@ -26,15 +46,25 @@ async function main() {
     const server = new WorkflowWebServer(store, engine, { port: args.port ? Number(args.port) : 0 });
     const address = await server.start();
     const url = `${address.url}/?workflowId=${encodeURIComponent(workflowId)}`;
+    store.writeWebSession(workflowId, { pid: process.pid, url, port: address.port, startedAt: new Date().toISOString() });
     process.stdout.write(`${JSON.stringify({ type: 'workflow.web.started', workflowId, url, port: address.port })}\n`);
     if (!args['no-open']) openBrowser(url).on('error', () => {});
-    const shutdown = async () => { await server.stop(); process.exit(0); };
+    const shutdown = async () => { store.clearWebSession(workflowId); await server.stop(); process.exit(0); };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
     return;
   }
 
   const result = await engine.run(args);
+
+  // A stage that finishes successfully enters waiting_approval. Start the
+  // browser workspace automatically so the user can confirm either in Claude
+  // or in the browser. The web process is detached and reused across stages.
+  if (result.type === 'workflow.result.accepted' && result.status === 'waiting_approval') {
+    const web = ensureWebWorkspace(result.workflowId, store);
+    result.web = { started: web.started, url: web.session?.url || null };
+  }
+
   const output = args.json ? JSON.stringify(result, null, 2) : engine.format(result);
   process.stdout.write(output + '\n');
 }
