@@ -30,6 +30,40 @@ test('failed stage can retry', () => {
   assert.equal(state.stages.specify.status, 'ready');
 });
 
+test('specify starts an interactive clarification state', () => {
+  const state = initialState('demo', 'Add export');
+  assert.deepEqual(state.clarification, {
+    status: 'not_started',
+    questions: [],
+    decisions: []
+  });
+  transition(state, 'next');
+  assert.equal(state.clarification.status, 'in_progress');
+});
+
+test('clarification records the user decision without completing specify', () => {
+  const state = initialState('demo', 'Add export');
+  transition(state, 'next');
+  state.currentAction = { id: 'action_1' };
+
+  transition(state, 'clarify', {
+    questionId: 'question_1',
+    question: 'How should large exports work?',
+    choices: ['A: sync', 'B: async', 'C: custom'],
+    choice: 'B',
+    answer: 'Use asynchronous export.'
+  });
+
+  assert.equal(state.stages.specify.status, 'running');
+  assert.equal(state.clarification.decisions.length, 1);
+  assert.deepEqual(state.clarification.decisions[0], {
+    questionId: 'question_1',
+    choice: 'B',
+    answer: 'Use asynchronous export.'
+  });
+  assert.equal(state.clarification.questions[0].status, 'resolved');
+});
+
 test('result tells the LLM to call next so the CLI remains the workflow driver', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
   const store = new WorkflowStore(root);
@@ -52,6 +86,46 @@ test('result tells the LLM to call next so the CLI remains the workflow driver',
   assert.equal(approval.type, 'workflow.approval_required');
   assert.equal(approval.actions.approve.command, 'dev-workflow approve --id demo');
   assert.equal(approval.actions.revise.command, 'dev-workflow revise --id demo --feedback "..."');
+});
+
+test('specify action exposes a CLI-generated clarification record command', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+
+  await engine.run({ command: 'init', name: 'demo', request: 'Add export' });
+  const action = await engine.run({ command: 'next', id: 'demo' });
+
+  assert.equal(action.clarification.enabled, true);
+  assert.equal(
+    action.clarification.recordCommand,
+    'dev-workflow clarify --id demo --question-id "<question-id>" --question "<question>" --choice "<choice>" --answer "<user-answer>"'
+  );
+  assert.deepEqual(action.input.clarification.decisions, []);
+});
+
+test('clarify command persists a decision and returns the next command', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+
+  await engine.run({ command: 'init', name: 'demo', request: 'Add export' });
+  await engine.run({ command: 'next', id: 'demo' });
+
+  const result = await engine.run({
+    command: 'clarify',
+    id: 'demo',
+    'question-id': 'question_1',
+    question: 'Export mode?',
+    choices: 'A: sync|B: async|C: custom',
+    choice: 'B',
+    answer: 'async'
+  });
+
+  assert.equal(result.type, 'workflow.clarification.accepted');
+  assert.equal(result.decision.choice, 'B');
+  assert.equal(result.next.command, 'dev-workflow next --id demo');
+
+  const state = await engine.run({ command: 'status', id: 'demo' });
+  assert.equal(state.clarification.decisions[0].answer, 'async');
 });
 
 test('workflow action declares direct execution for lightweight skills', async () => {
