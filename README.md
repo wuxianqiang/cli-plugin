@@ -47,6 +47,13 @@ The protocol is intentionally loop-based: **`next` gets an action, the LLM execu
 dev-workflow init --name add-modal --request "Add a reusable Modal component"
 dev-workflow next --id add-modal --json
 
+dev-workflow clarify \
+  --id add-modal \
+  --question-id question_1 \
+  --question "How should large exports work?" \
+  --choice "B" \
+  --answer "Use asynchronous export"
+
 dev-workflow result \
   --id add-modal \
   --action ACTION_ID \
@@ -54,16 +61,50 @@ dev-workflow result \
   --artifact .dev/workflows/add-modal/artifacts/specify.md
 
 dev-workflow next --id add-modal --json
-
 dev-workflow approve --id add-modal
-
 dev-workflow revise --id add-modal --feedback "Support ESC to close"
 dev-workflow retry --id add-modal
 dev-workflow status --id add-modal --json
 dev-workflow resume --id add-modal
 ```
 
-### LLM execution loop
+## Interactive Specify
+
+Specify is an interactive requirements-clarification loop, not a one-shot spec generator.
+
+```text
+User request
+    ↓
+Specify analyzes requirements
+    ↓
+Material ambiguity / boundary?
+    ├─ No → continue analysis
+    └─ Yes
+         ↓
+    AskUserQuestion
+      ├─ Option A
+      ├─ Option B
+      ├─ Option C
+      └─ Custom
+         ↓
+    dev-workflow clarify
+         ↓
+    next → same Specify action
+         ↓
+    More ambiguity?
+      ├─ Yes → AskUserQuestion again
+      └─ No → generate specify.md
+         ↓
+    result → next
+         ↓
+    workflow.approval_required
+         ↓
+    Approve / Revise
+```
+
+Clarification decisions are persisted in workflow state and should be detailed in `.dev/workflows/<workflow-id>/artifacts/decisions.md`. The final `specify.md` contains only confirmed requirements. Specify must not silently choose between multiple reasonable product behaviors.
+
+## LLM execution loop
 
 ```text
 next
