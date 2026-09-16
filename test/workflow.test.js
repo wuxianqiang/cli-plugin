@@ -58,10 +58,45 @@ test('clarification records the user decision without completing specify', () =>
   assert.equal(state.clarification.decisions.length, 1);
   assert.deepEqual(state.clarification.decisions[0], {
     questionId: 'question_1',
+    stage: 'specify',
     choice: 'B',
     answer: 'Use asynchronous export.'
   });
   assert.equal(state.clarification.questions[0].status, 'resolved');
+});
+
+test('design can record an unresolved technical decision and remain in the same running action', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+
+  await engine.run({ command: 'init', name: 'demo', request: 'Add export' });
+  const state = await engine.run({ command: 'status', id: 'demo' });
+  state.currentStage = 'design';
+  state.stages.specify.status = 'completed';
+  state.stages.design.status = 'ready';
+  engine.store.writeState(state);
+
+  const action = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(action.stage, 'design');
+  assert.equal(action.clarification.enabled, true);
+
+  const clarification = await engine.run({
+    command: 'clarify',
+    id: 'demo',
+    'question-id': 'design_question_1',
+    question: 'Which export architecture should be used?',
+    choices: 'A: async job|B: sync response|C: custom',
+    choice: 'A',
+    answer: 'Use an asynchronous job.'
+  });
+
+  assert.equal(clarification.type, 'workflow.clarification.accepted');
+  const resumed = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(resumed.type, 'workflow.action');
+  assert.equal(resumed.id, action.id);
+  assert.equal(resumed.stage, 'design');
+  assert.equal(resumed.input.clarification.decisions.at(-1).stage, 'design');
+  assert.equal(resumed.input.clarification.decisions.at(-1).choice, 'A');
 });
 
 test('result tells the LLM to call next so the CLI remains the workflow driver', async () => {
@@ -88,19 +123,25 @@ test('result tells the LLM to call next so the CLI remains the workflow driver',
   assert.equal(approval.actions.revise.command, 'dev-workflow revise --id demo --feedback "..."');
 });
 
-test('specify action exposes a CLI-generated clarification record command', async () => {
+test('specify and design actions expose a CLI-generated clarification record command', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
   const engine = new WorkflowEngine(new WorkflowStore(root));
 
   await engine.run({ command: 'init', name: 'demo', request: 'Add export' });
-  const action = await engine.run({ command: 'next', id: 'demo' });
+  const specifyAction = await engine.run({ command: 'next', id: 'demo' });
 
-  assert.equal(action.clarification.enabled, true);
+  assert.equal(specifyAction.clarification.enabled, true);
   assert.equal(
-    action.clarification.recordCommand,
+    specifyAction.clarification.recordCommand,
     'dev-workflow clarify --id demo --question-id "<question-id>" --question "<question>" --choice "<choice>" --answer "<user-answer>"'
   );
-  assert.deepEqual(action.input.clarification.decisions, []);
+
+  await engine.run({ command: 'result', id: 'demo', action: specifyAction.id, status: 'success', artifact: 'specify.md' });
+  await engine.run({ command: 'approve', id: 'demo' });
+  const designAction = await engine.run({ command: 'next', id: 'demo' });
+
+  assert.equal(designAction.clarification.enabled, true);
+  assert.equal(designAction.clarification.recordCommand, specifyAction.clarification.recordCommand);
 });
 
 test('clarify command persists a decision and returns the next command', async () => {
