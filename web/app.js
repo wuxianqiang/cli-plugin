@@ -159,7 +159,10 @@ function renderDocument() {
   }
   $('document').innerHTML = `
     <div class="doc-toolbar"><span class="badge">${esc(artifact)}</span><span class="hint">选中文字后会出现「添加评论」按钮，流程推进和修改决策请在 CLI / Claude 对话中完成。</span></div>
-    <div class="markdown" id="doc-text">${markdownHtml}</div>`;
+    <div class="markdown-shell">
+      <div class="markdown" id="doc-text">${markdownHtml}</div>
+      <button id="selection-comment-action" class="selection-comment-action" type="button" onclick="addAnnotationFromSelection()">💬 添加评论</button>
+    </div>`;
 }
 
 function renderAnnotations() {
