@@ -57,9 +57,9 @@ async function main() {
 
   const result = await engine.run(args);
 
-  // A stage that finishes successfully enters waiting_approval. Start the
-  // browser workspace automatically so the user can confirm either in Claude
-  // or in the browser. The web process is detached and reused across stages.
+  // A stage that finishes successfully enters waiting_approval. Start/reuse
+  // the Docs Review workspace as a read-only companion. Workflow decisions
+  // are made only by the CLI / Claude conversation via AskUserQuestion.
   if (result.type === 'workflow.result.accepted' && result.status === 'waiting_approval') {
     const web = ensureWebWorkspace(result.workflowId, store);
     result.web = { started: web.started, url: web.session?.url || null };
