@@ -34,7 +34,7 @@ class WorkflowEngine {
     const current = state.stages[stage];
     const execution = getExecutionConfig(stage);
     const artifactPath = `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`;
-    const clarificationEnabled = stage === 'specify' || stage === 'design';
+    const clarificationEnabled = ['specify', 'design', 'review'].includes(stage);
     return {
       type: 'workflow.action',
       id: actionId,
@@ -51,6 +51,7 @@ class WorkflowEngine {
       },
       clarification: clarificationEnabled ? {
         enabled: true,
+        purpose: stage === 'review' ? 'record review finding fix/skip decisions' : 'record unresolved decisions',
         recordCommand: `dev-workflow clarify --id ${state.workflowId} --question-id "<question-id>" --question "<question>" --choice "<choice>" --answer "<user-answer>"`
       } : { enabled: false },
       expectedOutput: {
@@ -88,9 +89,8 @@ class WorkflowEngine {
       };
     }
 
-    // Specify and Design remain the same running action while they ask clarification questions.
-    // Returning the same action ID lets the LLM continue the skill without starting another attempt.
-    if (current.status === 'running' && (stage === 'specify' || stage === 'design') && state.currentAction?.id) {
+    // Interactive stages remain the same running action while they ask clarification questions.
+    if (current.status === 'running' && ['specify', 'design', 'review'].includes(stage) && state.currentAction?.id) {
       return this.buildAction(state, stage, state.currentAction.id);
     }
 
@@ -162,7 +162,7 @@ class WorkflowEngine {
         ? `subagent/${result.execution.strategy}: ${result.execution.agents.join(', ')}`
         : `${result.execution.mode}/${result.execution.strategy}`;
       const clarification = result.clarification?.enabled
-        ? `\n\nClarification: enabled\nRecord decision: ${result.clarification.recordCommand}` : '';
+        ? `\n\nClarification: enabled\nPurpose: ${result.clarification.purpose}\nRecord decision: ${result.clarification.recordCommand}` : '';
       return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nExecution: ${execution}\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}${clarification}\n\nSuccess: ${result.completion.command}\nFailure: ${result.completion.failureCommand}`;
     }
     if (result.type === 'workflow.approval_required') return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\n\nApprove: ${result.actions.approve.command}\nRevise: ${result.actions.revise.command}`;
