@@ -30,54 +30,11 @@ class WorkflowEngine {
     if (!id) throw Object.assign(new Error('Missing --id'), { code: 'INVALID_ARGUMENTS' });
     return this.store.read(id);
   }
-  next(args) {
-    const state = this.load(args);
-    if (state.status === 'completed') return { type: 'workflow.completed', workflowId: state.workflowId };
-
-    const stage = state.currentStage;
+  buildAction(state, stage, actionId) {
     const current = state.stages[stage];
-
-    if (current.status === 'waiting_approval') {
-      return {
-        type: 'workflow.approval_required',
-        workflowId: state.workflowId,
-        stage,
-        status: current.status,
-        artifact: current.artifact,
-        actions: {
-          approve: { command: `dev-workflow approve --id ${state.workflowId}` },
-          revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "<user-feedback>"` }
-        }
-      };
-    }
-
-    if (current.status === 'failed') {
-      return {
-        type: 'workflow.retry_required',
-        workflowId: state.workflowId,
-        stage,
-        status: current.status,
-        actions: {
-          retry: { command: `dev-workflow retry --id ${state.workflowId}` }
-        }
-      };
-    }
-
-    if (current.status !== 'ready') {
-      return {
-        type: 'workflow.state',
-        workflowId: state.workflowId,
-        stage,
-        status: current.status,
-        next: null
-      };
-    }
-
-    transition(state, 'next');
     const execution = getExecutionConfig(stage);
-    const actionId = `action_${randomUUID()}`;
     const artifactPath = `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`;
-    const action = {
+    return {
       type: 'workflow.action',
       id: actionId,
       workflowId: state.workflowId,
@@ -97,19 +54,55 @@ class WorkflowEngine {
       } : { enabled: false },
       expectedOutput: {
         artifact: artifactPath,
-        result: {
-          status: 'success | failed',
-          artifact: artifactPath
-        }
+        result: { status: 'success | failed', artifact: artifactPath }
       },
       completion: {
         command: `dev-workflow result --id ${state.workflowId} --action ${actionId} --status success --artifact ${artifactPath}`,
         failureCommand: `dev-workflow result --id ${state.workflowId} --action ${actionId} --status failed`
       }
     };
-    state.currentAction = { id: action.id, stage, attempt: current.attempt, execution };
+  }
+  next(args) {
+    const state = this.load(args);
+    if (state.status === 'completed') return { type: 'workflow.completed', workflowId: state.workflowId };
+
+    const stage = state.currentStage;
+    const current = state.stages[stage];
+
+    if (current.status === 'waiting_approval') {
+      return {
+        type: 'workflow.approval_required', workflowId: state.workflowId, stage, status: current.status,
+        artifact: current.artifact,
+        actions: {
+          approve: { command: `dev-workflow approve --id ${state.workflowId}` },
+          revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "<user-feedback>"` }
+        }
+      };
+    }
+
+    if (current.status === 'failed') {
+      return {
+        type: 'workflow.retry_required', workflowId: state.workflowId, stage, status: current.status,
+        actions: { retry: { command: `dev-workflow retry --id ${state.workflowId}` } }
+      };
+    }
+
+    // Specify remains one running action while it asks multiple clarification questions.
+    // Returning the same action ID lets the LLM continue the skill without starting another attempt.
+    if (current.status === 'running' && stage === 'specify' && state.currentAction?.id) {
+      return this.buildAction(state, stage, state.currentAction.id);
+    }
+
+    if (current.status !== 'ready') {
+      return { type: 'workflow.state', workflowId: state.workflowId, stage, status: current.status, next: null };
+    }
+
+    transition(state, 'next');
+    const actionId = `action_${randomUUID()}`;
+    const action = this.buildAction(state, stage, actionId);
+    state.currentAction = { id: action.id, stage, attempt: current.attempt, execution: action.execution };
     this.store.writeState(state);
-    this.store.appendHistory({ type: 'workflow.action', workflowId: state.workflowId, actionId: action.id, stage, execution });
+    this.store.appendHistory({ type: 'workflow.action', workflowId: state.workflowId, actionId: action.id, stage, execution: action.execution });
     return action;
   }
   clarify(args) {
@@ -123,18 +116,12 @@ class WorkflowEngine {
     });
     this.store.writeState(state);
     this.store.appendHistory({
-      type: 'workflow.clarification',
-      workflowId: state.workflowId,
-      stage: state.currentStage,
-      questionId: args['question-id'] || args.questionId,
-      choice: args.choice
+      type: 'workflow.clarification', workflowId: state.workflowId, stage: state.currentStage,
+      questionId: args['question-id'] || args.questionId, choice: args.choice
     });
     return {
-      type: 'workflow.clarification.accepted',
-      workflowId: state.workflowId,
-      stage: state.currentStage,
-      decision: state.clarification.decisions.at(-1),
-      next: { command: `dev-workflow next --id ${state.workflowId}` }
+      type: 'workflow.clarification.accepted', workflowId: state.workflowId, stage: state.currentStage,
+      decision: state.clarification.decisions.at(-1), next: { command: `dev-workflow next --id ${state.workflowId}` }
     };
   }
   result(args) {
@@ -144,13 +131,9 @@ class WorkflowEngine {
     transition(state, 'result', { actionId: args.action, status: args.status, artifacts });
     this.store.writeState(state);
     this.store.appendHistory({ type: 'workflow.result', workflowId: state.workflowId, actionId: args.action, stage: state.currentStage, status: args.status, artifacts });
-
     return {
-      type: 'workflow.result.accepted',
-      workflowId: state.workflowId,
-      stage: state.currentStage,
-      status: state.stages[state.currentStage].status,
-      artifacts,
+      type: 'workflow.result.accepted', workflowId: state.workflowId, stage: state.currentStage,
+      status: state.stages[state.currentStage].status, artifacts,
       next: { command: `dev-workflow next --id ${state.workflowId}` }
     };
   }
@@ -172,16 +155,11 @@ class WorkflowEngine {
         ? `subagent/${result.execution.strategy}: ${result.execution.agents.join(', ')}`
         : `${result.execution.mode}/${result.execution.strategy}`;
       const clarification = result.clarification?.enabled
-        ? `\n\nClarification: enabled\nRecord decision: ${result.clarification.recordCommand}`
-        : '';
+        ? `\n\nClarification: enabled\nRecord decision: ${result.clarification.recordCommand}` : '';
       return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nExecution: ${execution}\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}${clarification}\n\nSuccess: ${result.completion.command}\nFailure: ${result.completion.failureCommand}`;
     }
-    if (result.type === 'workflow.approval_required') {
-      return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\n\nApprove: ${result.actions.approve.command}\nRevise: ${result.actions.revise.command}`;
-    }
-    if (result.type === 'workflow.retry_required') {
-      return `[RETRY REQUIRED]\n\nStage: ${result.stage}\n\nRetry: ${result.actions.retry.command}`;
-    }
+    if (result.type === 'workflow.approval_required') return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\n\nApprove: ${result.actions.approve.command}\nRevise: ${result.actions.revise.command}`;
+    if (result.type === 'workflow.retry_required') return `[RETRY REQUIRED]\n\nStage: ${result.stage}\n\nRetry: ${result.actions.retry.command}`;
     if (result.type === 'workflow.status') return `Workflow: ${result.workflowId}\nStatus: ${result.status}\nCurrent stage: ${result.currentStage}\n` + STAGES.map(s => `  ${s.padEnd(10)} ${result.stages[s].status}`).join('\n');
     return JSON.stringify(result, null, 2);
   }
