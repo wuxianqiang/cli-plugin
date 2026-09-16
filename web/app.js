@@ -8,6 +8,7 @@ const $ = id => document.getElementById(id);
 const stageLabel = s => ({ specify: 'Specify', design: 'Design', tasks: 'Tasks', implement: 'Implement', review: 'Review' })[s] || s;
 const statusLabel = s => ({ pending: '待开始', ready: '待执行', running: 'Agent 执行中', waiting_approval: '等待 CLI 确认', completed: '已完成', failed: '执行失败' })[s] || s;
 const esc = value => String(value ?? '').replace(/[&<>\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));
+let pendingSelection = null;
 
 async function loadData() {
   const [s, a, d] = await Promise.all([
@@ -157,9 +158,8 @@ function renderDocument() {
     markdownHtml = `<pre class="markdown-fallback">${esc(documentText)}</pre>`;
   }
   $('document').innerHTML = `
-    <div class="doc-toolbar"><span class="badge">${esc(artifact)}</span><span class="hint">选中文字后点击「添加评论」，评论会以划线标记在文档中。流程推进和修改决策请在 CLI / Claude 对话中完成。</span></div>
-    <div class="markdown" id="doc-text">${markdownHtml}</div>
-    <div class="doc-tools"><button class="btn" onclick="addAnnotation()">＋ 添加评论</button></div>`;
+    <div class="doc-toolbar"><span class="badge">${esc(artifact)}</span><span class="hint">选中文字后会出现「添加评论」按钮，流程推进和修改决策请在 CLI / Claude 对话中完成。</span></div>
+    <div class="markdown" id="doc-text">${markdownHtml}</div>`;
 }
 
 function renderAnnotations() {
@@ -175,6 +175,70 @@ function renderActivity() {
   $('activity').innerHTML = `<div class="empty">当前阶段：${stageLabel(state.currentStage)} · ${statusLabel(state.stages[state.currentStage].status)}<br>网页仅用于 Docs 阅读与评论，流程控制由 CLI / Claude 对话负责。</div>`;
 }
 
+function getSelectionInDocument() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const doc = $('doc-text');
+  if (!doc || !doc.contains(range.commonAncestorContainer)) return null;
+  const quote = selection.toString();
+  if (!quote.trim()) return null;
+  return { selection, range, quote };
+}
+
+function getTextOffset(root, node, offset) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let total = 0;
+  let current;
+  while ((current = walker.nextNode())) {
+    if (current === node) return total + offset;
+    total += current.nodeValue.length;
+  }
+  return total;
+}
+
+function showCommentAction() {
+  const selected = getSelectionInDocument();
+  const action = $('selection-comment-action');
+  if (!selected || !action) {
+    if (action) action.classList.remove('visible');
+    pendingSelection = null;
+    return;
+  }
+
+  const root = $('doc-text');
+  const rect = selected.range.getBoundingClientRect();
+  const rootRect = root.getBoundingClientRect();
+  const start = getTextOffset(root, selected.range.startContainer, selected.range.startOffset);
+  const end = getTextOffset(root, selected.range.endContainer, selected.range.endOffset);
+  pendingSelection = { quote: selected.quote, start, end };
+
+  action.style.left = `${Math.max(8, rect.left - rootRect.left + rect.width / 2 - 55)}px`;
+  action.style.top = `${Math.max(8, rect.top - rootRect.top - 42)}px`;
+  action.classList.add('visible');
+}
+
+function hideCommentAction() {
+  const action = $('selection-comment-action');
+  if (action) action.classList.remove('visible');
+  pendingSelection = null;
+}
+
+async function addAnnotationFromSelection() {
+  if (!pendingSelection) return;
+  const { quote, start, end } = pendingSelection;
+  const content = prompt(`为选中的内容添加评论：\n\n“${quote}”`);
+  if (!content) return;
+  const type = prompt('评论类型（requirement / question / change / custom）：', 'change') || 'custom';
+  const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/annotations`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, content, stage: state.currentStage, target: { quote, start, end } })
+  });
+  if (!response.ok) { alert('评论保存失败，请重试。'); return; }
+  window.getSelection()?.removeAllRanges();
+  hideCommentAction();
+}
+
 function connect() {
   const es = new EventSource(`/events?workflowId=${encodeURIComponent(workflowId)}`);
   es.onopen = () => { $('connection').textContent = '● Connected'; $('connection').className = 'status ok'; };
@@ -187,22 +251,15 @@ function connect() {
   });
 }
 
-async function addAnnotation() {
-  const sel = window.getSelection();
-  const quote = sel?.toString() || '';
-  if (!quote.trim()) { alert('请先在 Markdown 预览中选择需要评论的文字。'); return; }
-  const content = prompt(`为选中的内容添加评论：\n\n“${quote}”`);
-  if (!content) return;
-  const type = prompt('评论类型（requirement / question / change / custom）：', 'change') || 'custom';
-  const start = documentText.indexOf(quote);
-  if (start < 0) { alert('无法定位选中的文档内容，请重新选择。'); return; }
-  const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/annotations`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type, content, stage: state.currentStage, target: { quote, start, end: start + quote.length } })
-  });
-  if (!response.ok) { alert('评论保存失败，请重试。'); return; }
-  sel.removeAllRanges();
-}
+document.addEventListener('selectionchange', () => {
+  window.clearTimeout(window.__selectionTimer);
+  window.__selectionTimer = window.setTimeout(showCommentAction, 20);
+});
+document.addEventListener('mousedown', event => {
+  const action = $('selection-comment-action');
+  if (action && !action.contains(event.target)) hideCommentAction();
+});
+document.addEventListener('scroll', hideCommentAction, true);
 
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
@@ -211,4 +268,5 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   $(b.dataset.tab).classList.remove('hidden');
   if (b.dataset.tab === 'activity') renderActivity();
 });
+
 load();
