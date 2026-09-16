@@ -2,6 +2,7 @@
 
 const STAGES = ['specify', 'design', 'tasks', 'implement', 'review'];
 const VALID_STAGE_STATUSES = ['pending', 'ready', 'running', 'completed', 'failed', 'waiting_approval'];
+const CLARIFICATION_STAGES = ['specify', 'design'];
 
 // The CLI declares how a stage should be executed; it never dispatches agents itself.
 // This keeps workflow/state management separate from LLM orchestration.
@@ -56,18 +57,19 @@ function transition(state, event, payload = {}) {
   if (event === 'next') {
     if (current.status !== 'ready') throw Object.assign(new Error(`Stage ${stage} is not ready`), { code: 'STAGE_NOT_READY' });
     current.status = 'running'; current.attempt += 1;
-    if (stage === 'specify') state.clarification.status = 'in_progress';
+    if (CLARIFICATION_STAGES.includes(stage)) state.clarification.status = 'in_progress';
     return;
   }
   if (event === 'clarify') {
-    if (stage !== 'specify' || current.status !== 'running') {
-      throw Object.assign(new Error('Clarification can only be recorded while Specify is running'), { code: 'CLARIFICATION_NOT_ACTIVE' });
+    if (!CLARIFICATION_STAGES.includes(stage) || current.status !== 'running') {
+      throw Object.assign(new Error(`Clarification can only be recorded while ${stage} is running`), { code: 'CLARIFICATION_NOT_ACTIVE' });
     }
     if (!payload.questionId || !payload.question || !payload.choice || !payload.answer) {
       throw Object.assign(new Error('clarify requires --question-id, --question, --choice and --answer'), { code: 'INVALID_ARGUMENTS' });
     }
     const question = {
       id: payload.questionId,
+      stage,
       question: payload.question,
       choices: payload.choices || [],
       status: 'resolved'
@@ -75,6 +77,7 @@ function transition(state, event, payload = {}) {
     state.clarification.questions.push(question);
     state.clarification.decisions.push({
       questionId: payload.questionId,
+      stage,
       choice: payload.choice,
       answer: payload.answer
     });
@@ -88,7 +91,7 @@ function transition(state, event, payload = {}) {
       current.status = 'waiting_approval';
       current.artifact = payload.artifacts?.[0]?.path || payload.artifact || null;
       if (current.artifact) state.artifacts.push({ stage, path: current.artifact });
-      if (stage === 'specify') state.clarification.status = 'completed';
+      if (CLARIFICATION_STAGES.includes(stage)) state.clarification.status = 'completed';
     } else current.status = 'failed';
     return;
   }
@@ -110,4 +113,4 @@ function transition(state, event, payload = {}) {
   throw Object.assign(new Error(`Unknown transition: ${event}`), { code: 'UNKNOWN_TRANSITION' });
 }
 
-module.exports = { STAGES, VALID_STAGE_STATUSES, EXECUTION_CONFIG, getExecutionConfig, initialState, transition };
+module.exports = { STAGES, VALID_STAGE_STATUSES, CLARIFICATION_STAGES, EXECUTION_CONFIG, getExecutionConfig, initialState, transition };
