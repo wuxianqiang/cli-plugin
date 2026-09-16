@@ -38,7 +38,13 @@ function initialState(workflowId, request) {
   }]));
   return {
     version: '1.0', workflowId, request, status: 'running', currentStage: 'specify',
-    currentAction: null, stages, artifacts: [], history: []
+    currentAction: null,
+    clarification: {
+      status: 'not_started',
+      questions: [],
+      decisions: []
+    },
+    stages, artifacts: [], history: []
   };
 }
 
@@ -46,16 +52,44 @@ function transition(state, event, payload = {}) {
   const stage = state.currentStage;
   const current = state.stages[stage];
   if (!VALID_STAGE_STATUSES.includes(current.status)) throw new Error(`Invalid stage status: ${current.status}`);
+
   if (event === 'next') {
     if (current.status !== 'ready') throw Object.assign(new Error(`Stage ${stage} is not ready`), { code: 'STAGE_NOT_READY' });
     current.status = 'running'; current.attempt += 1;
+    if (stage === 'specify') state.clarification.status = 'in_progress';
+    return;
+  }
+  if (event === 'clarify') {
+    if (stage !== 'specify' || current.status !== 'running') {
+      throw Object.assign(new Error('Clarification can only be recorded while Specify is running'), { code: 'CLARIFICATION_NOT_ACTIVE' });
+    }
+    if (!payload.questionId || !payload.question || !payload.choice || !payload.answer) {
+      throw Object.assign(new Error('clarify requires --question-id, --question, --choice and --answer'), { code: 'INVALID_ARGUMENTS' });
+    }
+    const question = {
+      id: payload.questionId,
+      question: payload.question,
+      choices: payload.choices || [],
+      status: 'resolved'
+    };
+    state.clarification.questions.push(question);
+    state.clarification.decisions.push({
+      questionId: payload.questionId,
+      choice: payload.choice,
+      answer: payload.answer
+    });
+    state.clarification.status = 'in_progress';
     return;
   }
   if (event === 'result') {
     if (!state.currentAction || state.currentAction.id !== payload.actionId) throw Object.assign(new Error('Action ID does not match the current action'), { code: 'ACTION_MISMATCH' });
     if (current.status !== 'running') throw Object.assign(new Error(`Stage ${stage} is not running`), { code: 'STAGE_NOT_RUNNING' });
-    if (payload.status === 'success') { current.status = 'waiting_approval'; current.artifact = payload.artifacts?.[0]?.path || payload.artifact || null; if (current.artifact) state.artifacts.push({ stage, path: current.artifact }); }
-    else current.status = 'failed';
+    if (payload.status === 'success') {
+      current.status = 'waiting_approval';
+      current.artifact = payload.artifacts?.[0]?.path || payload.artifact || null;
+      if (current.artifact) state.artifacts.push({ stage, path: current.artifact });
+      if (stage === 'specify') state.clarification.status = 'completed';
+    } else current.status = 'failed';
     return;
   }
   if (event === 'approve') {
