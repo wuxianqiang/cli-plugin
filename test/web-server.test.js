@@ -6,15 +6,14 @@ const os = require('node:os');
 const path = require('node:path');
 const { WorkflowStore } = require('../src/workflow-store');
 const { WorkflowEngine } = require('../src/workflow-engine');
-const { WorkflowWebServer } = require('../src/web-server');
+const { DocsWebServer } = require('../src/docs-web-server');
 const { initialState } = require('../src/workflow');
 
-test('web server exposes workflow state and annotations without workflow controls', async () => {
+test('docs web server exposes workflow state and annotations without workflow controls', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
   const store = new WorkflowStore(root);
   store.create(initialState('web-test', 'add modal'));
-  const engine = new WorkflowEngine(store);
-  const server = new WorkflowWebServer(store, engine, { port: 0 });
+  const server = new DocsWebServer(store, { port: 0 });
   const address = await server.start();
   try {
     const stateResponse = await fetch(`${address.url}/api/workflows/web-test`);
@@ -48,7 +47,7 @@ test('CLI apply-comments transitions waiting approval back to ready and injects 
   const store = new WorkflowStore(root);
   store.create(initialState('comments-test', 'add modal'));
   const engine = new WorkflowEngine(store);
-  const server = new WorkflowWebServer(store, engine, { port: 0 });
+  const server = new DocsWebServer(store, { port: 0 });
   const address = await server.start();
 
   try {
