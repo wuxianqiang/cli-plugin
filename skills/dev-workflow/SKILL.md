@@ -1,11 +1,11 @@
 ---
 name: dev-workflow
-description: Orchestrates the CLI-driven development workflow and supports browser-based human-in-the-loop approval.
+description: Orchestrates the CLI-driven development workflow; the Web UI is a Docs review workspace only.
 ---
 
 # Dev Workflow Orchestrator
 
-The CLI is the workflow runtime and state authority. It owns stage state, approval, retry, and progression. Do not implement workflow transitions yourself.
+The CLI is the workflow runtime and state authority. It owns stage state, approval, retry, revision, and progression. The Web UI never advances, approves, retries, or revises a workflow.
 
 ## Command Location — IMPORTANT
 
@@ -27,9 +27,9 @@ For example:
 
 ```bash
 node ./bin/dev-workflow.js next --id <workflow-id> --json
-node ./bin/dev-workflow.js wait --id <workflow-id> --json
 node ./bin/dev-workflow.js approve --id <workflow-id> --json
 node ./bin/dev-workflow.js apply-comments --id <workflow-id> --json
+node ./bin/dev-workflow.js revise --id <workflow-id> --feedback "<user-feedback>" --json
 node ./bin/dev-workflow.js web --id <workflow-id>
 ```
 
@@ -49,9 +49,26 @@ This distinction is mandatory for this workflow.
 
 ## Browser Workspace
 
-The workflow has a local Web UI showing the complete SDD timeline, current stage/status, artifacts, annotations, decisions, and live updates.
+The local Web UI is a **Docs Review workspace**, not a workflow controller.
 
-The CLI automatically starts/reuses the browser workspace when a stage enters `waiting_approval`.
+It may:
+
+- show the SDD timeline and current stage/status;
+- render the current Markdown artifact;
+- allow selecting text and adding annotations/comments;
+- underline annotated text in the preview;
+- list existing annotations;
+- sync new annotations to the shared workflow store.
+
+It must **not** provide buttons or API actions for:
+
+- approve / proceed;
+- retry;
+- revise;
+- apply Docs comments;
+- any other workflow transition.
+
+The Web UI cannot wake or drive the Claude/Agent CLI, so workflow progression must never depend on a browser action or browser `wait` loop.
 
 ## Core Loop
 
@@ -68,24 +85,20 @@ workflow.result
  ↓
 workflow.approval_required
  ↓
-┌──────────────────────────────────────────────┐
-│ Browser / Claude approval                    │
-│                                              │
-│ 通过 → 下一阶段                               │
-│                                              │
-│ Docs 评论 → 拉取评论 → Agent 修改 → 再审批   │
-│                                              │
-│ 直接反馈 → Agent 修改 → 再审批               │
-└──────────────────────────────────────────────┘
+AskUserQuestion in CLI / Claude conversation
+ ├─ 通过并进入下一阶段
+ │    └─ approve → next
+ ├─ 拉取 Docs 评论并重新修改
+ │    └─ apply-comments → next → current Skill
+ └─ 直接修改并提供反馈
+      └─ revise(feedback) → next → current Skill
 ```
 
-Every stage requires explicit human approval.
+Every successful stage requires an explicit human decision in the CLI / Claude conversation.
 
 ## CLI Command Protocol
 
 When the CLI returns a `command`, execute that exact command. Do not reconstruct workflow IDs, action IDs, or other generated arguments. Only replace explicitly marked user-input placeholders.
-
-If the returned command starts with `dev-workflow` but that executable is not on `PATH`, preserve the exact arguments and invoke the repository's `bin/dev-workflow.js` entrypoint instead.
 
 Start/resume with:
 
@@ -93,61 +106,53 @@ Start/resume with:
 node ./bin/dev-workflow.js next --id <workflow-id> --json
 ```
 
-## Browser Approval Synchronization
+After a stage result enters `waiting_approval`, **do not call `wait` and do not wait for the browser**. Call `next` to obtain `workflow.approval_required`, then use `AskUserQuestion` in the CLI/Claude conversation.
 
-This is critical: a browser decision changes the shared workflow state, but it cannot directly invoke or wake an LLM session. Therefore the Orchestrator must keep the current LLM workflow turn waiting while a browser approval is possible.
+## Stage Completion Approval
 
 When `workflow.result` returns `status=waiting_approval`:
 
-1. The CLI automatically starts/reuses the Web workspace.
-2. Do **not** finish the orchestration turn merely because the result was accepted.
-3. If browser HITL is being used, execute the CLI `wait` command from the repository's `bin/` directory:
+1. Execute the returned continuation command and obtain `workflow.approval_required`.
+2. Call `AskUserQuestion` in the CLI / Claude conversation.
+3. Present these choices:
+   - **通过并进入下一阶段** — execute the exact `actions.approve.command`.
+   - **拉取 Docs 评论并重新修改** — execute the exact `actions.applyComments.command`.
+   - **直接修改并提供反馈** — collect the user's feedback, substitute only the `<user-feedback>` placeholder, and execute the exact `actions.revise.command`.
+4. After `approve`, execute the returned `next.command` and continue to the next stage.
+5. After `apply-comments` or `revise`, execute the returned `next.command` and rerun the current stage Skill with the resulting input.
+6. Never automatically approve a completed stage.
 
-```bash
-node ./bin/dev-workflow.js wait --id <workflow-id> --json
-```
-
-4. `wait` blocks until the workflow state changes. The browser `approve`, `apply-comments`, `revise`, or `retry` endpoint changes the same state store.
-5. When `wait` returns `workflow.wait.completed`, execute its exact `next.command`.
-6. Continue with the returned `workflow.action`.
+The browser may remain open as a read-only review surface, but it has no role in the approval handshake.
 
 ## Docs Comment Revision
 
-When a stage is `waiting_approval`, the Browser Markdown preview supports selecting text and adding a typed annotation. Each annotation must retain:
+The Markdown preview supports selecting text and adding a typed annotation. Each annotation must retain:
 
-- current stage
-- selected quote
-- source start/end offsets when available
-- human comment
-- annotation type
+- current stage;
+- selected quote;
+- source start/end offsets when available;
+- human comment;
+- annotation type;
+- open/resolved status.
 
-Annotations are persisted in the workflow's shared `.dev` state and are visible to both Browser and CLI.
+When the user chooses **“拉取 Docs 评论并重新修改”** in the CLI:
 
-If the user clicks **“拉取 Docs 评论并重新修改”**:
-
-1. The Web server records the human decision.
-2. The workflow transitions the current stage from `waiting_approval` to `ready`.
-3. The CLI `wait` process wakes up because the shared state changed.
-4. Execute the exact `next.command` returned by `wait`.
-5. The resulting `workflow.action.input.annotations` contains the open annotations for the current stage.
-6. The stage Skill must review every annotation, use its target quote as context, and update the current artifact accordingly.
-7. Complete the stage with the normal `workflow.result` command.
-8. The stage returns to `waiting_approval`, allowing another Browser review cycle.
+1. Execute the exact `actions.applyComments.command` returned by `workflow.approval_required`.
+2. The workflow transitions the current stage from `waiting_approval` to `ready` and records the open annotation IDs in history.
+3. Execute the returned `next.command`.
+4. The resulting `workflow.action.input.annotations` contains the open annotations for the current stage.
+5. The stage Skill must review every annotation, use its target quote as context, and update the current artifact accordingly.
+6. Complete the stage with the normal `workflow.result` command.
+7. The stage returns to `waiting_approval`, creating another CLI approval cycle.
 
 Do not silently mark Docs annotations as resolved before the Agent has incorporated them into the artifact. The open annotation list is the authoritative human feedback for the revision pass.
-
-### Claude Conversation Approval
-
-If the user approves in the Claude conversation instead, execute the CLI-generated `approve` command directly. Do not call `wait` after the approval has already changed the state.
-
-If the user chooses revise, execute the exact generated `revise` command with only the feedback placeholder replaced.
 
 ## Interactive Clarification
 
 For `Specify` and `Design`, if the running action exposes `clarification.enabled=true` and discovers a material unresolved decision:
 
-1. Prefer Browser clarification when the Web UI supports it.
-2. Otherwise use `AskUserQuestion`.
+1. Use `AskUserQuestion` in the CLI / Claude conversation.
+2. If there are multiple viable options, present them explicitly (for example, recommended Option A, Option B, or a custom suggestion).
 3. Record the decision using the exact `clarification.recordCommand`.
 4. Execute the returned `next.command`.
 5. Continue the same action until all material questions are resolved.
@@ -156,7 +161,9 @@ Do not call `workflow.result` while unresolved clarification remains.
 
 ## Review
 
-Review findings require explicit `fix` or `skip` decisions. Selected fixes must be implemented and verified, then relevant review agents rerun. Newly discovered findings require another human decision cycle.
+Review findings require explicit `fix` or `skip` decisions in the CLI / Claude conversation. Selected fixes must be implemented and verified, then relevant review agents rerun. Newly discovered findings require another human decision cycle.
+
+The Web UI can display review artifacts and comments but cannot decide which findings to fix or skip.
 
 ## Stage Router
 
@@ -177,7 +184,8 @@ After a Skill/Subagent finishes:
 1. Verify the expected artifact exists.
 2. Execute the exact `completion.command` returned by the workflow action, or its failure command.
 3. Execute the exact continuation command.
-4. If the result is `workflow.approval_required`, use the Browser/Claude approval synchronization protocol above.
-5. If the user selected Docs comments, execute the returned `next.command`; do not manually reconstruct the annotation payload.
+4. If the result is `workflow.approval_required`, call `AskUserQuestion` in the CLI / Claude conversation.
+5. If the user selected Docs comments, execute the exact `apply-comments` command returned by the approval response, then the exact `next.command`.
+6. Pass the resulting `workflow.action.input.annotations` into the current Skill revision.
 
-Never automatically approve a completed stage.
+Never use the Web UI as the source of workflow-control decisions.
