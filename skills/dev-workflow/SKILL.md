@@ -7,6 +7,45 @@ description: Orchestrates the CLI-driven development workflow and supports brows
 
 The CLI is the workflow runtime and state authority. It owns stage state, approval, retry, and progression. Do not implement workflow transitions yourself.
 
+## Command Location — IMPORTANT
+
+**All `dev-workflow` executable commands are defined in the repository's `bin/` directory.** Claude Code may not automatically discover commands from `bin/`, so do not assume `dev-workflow` is a globally available shell command.
+
+The authoritative executable entrypoint is:
+
+```text
+bin/dev-workflow.js
+```
+
+When running the workflow from the repository root, use the `bin/` entrypoint directly:
+
+```bash
+node ./bin/dev-workflow.js <command> --id <workflow-id> --json
+```
+
+For example:
+
+```bash
+node ./bin/dev-workflow.js next --id <workflow-id> --json
+node ./bin/dev-workflow.js wait --id <workflow-id> --json
+node ./bin/dev-workflow.js approve --id <workflow-id> --json
+node ./bin/dev-workflow.js web --id <workflow-id>
+```
+
+If a workflow response contains a generated command such as `dev-workflow next ...`, execute that command exactly when the `dev-workflow` executable is available. **If the shell reports `dev-workflow: command not found`, do not stop or claim the command is unavailable. Resolve it to the repository entrypoint and execute:**
+
+```bash
+node ./bin/dev-workflow.js <the same command arguments>
+```
+
+Do not search for executable workflow commands in `skills/` or `src/`:
+
+- `bin/` = executable CLI commands
+- `skills/` = Skill definitions/instructions
+- `src/` = CLI/runtime implementation modules
+
+This distinction is mandatory for this workflow.
+
 ## Browser Workspace
 
 The workflow has a local Web UI showing the complete SDD timeline, current stage/status, artifacts, annotations, decisions, and live updates.
@@ -47,10 +86,12 @@ Every stage requires explicit human approval.
 
 When the CLI returns a `command`, execute that exact command. Do not reconstruct workflow IDs, action IDs, or other generated arguments. Only replace explicitly marked user-input placeholders.
 
+If the returned command starts with `dev-workflow` but that executable is not on `PATH`, preserve the exact arguments and invoke the repository's `bin/dev-workflow.js` entrypoint instead.
+
 Start/resume with:
 
 ```bash
-dev-workflow next --id <workflow-id> --json
+node ./bin/dev-workflow.js next --id <workflow-id> --json
 ```
 
 ## Browser Approval Synchronization
@@ -61,10 +102,10 @@ When `workflow.result` returns `status=waiting_approval`:
 
 1. The CLI automatically starts/reuses the Web workspace.
 2. Do **not** finish the orchestration turn merely because the result was accepted.
-3. If browser HITL is being used, execute:
+3. If browser HITL is being used, execute the CLI `wait` command from the repository's `bin/` directory:
 
 ```bash
-dev-workflow wait --id <workflow-id>
+node ./bin/dev-workflow.js wait --id <workflow-id> --json
 ```
 
 4. `wait` blocks until the workflow state changes. The browser `approve`, `revise`, or `retry` endpoint changes the same state store.
@@ -74,7 +115,7 @@ dev-workflow wait --id <workflow-id>
 This is what makes the following flow work:
 
 ```text
-Claude tool call: dev-workflow wait
+Claude tool call: node ./bin/dev-workflow.js wait
           │
           │ process remains alive
           │
