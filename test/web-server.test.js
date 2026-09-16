@@ -36,3 +36,37 @@ test('web server exposes workflow state and annotations', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('browser approval changes shared state so wait can resume', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-wait-'));
+  const store = new WorkflowStore(root);
+  const state = initialState('wait-test', 'add modal');
+  store.create(state);
+  const engine = new WorkflowEngine(store);
+  const server = new WorkflowWebServer(store, engine, { port: 0 });
+  const address = await server.start();
+
+  try {
+    const action = await engine.run({ command: 'next', id: 'wait-test' });
+    fs.mkdirSync(path.join(root, '.dev/workflows/wait-test/artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dev/workflows/wait-test/artifacts/specify.md'), '# Specify');
+    await engine.run({ command: 'result', id: 'wait-test', action: action.id, status: 'success', artifact: '.dev/workflows/wait-test/artifacts/specify.md' });
+
+    const waiting = engine.run({ command: 'wait', id: 'wait-test', timeout: 3000, interval: 20 });
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const response = await fetch(`${address.url}/api/workflows/wait-test/decisions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', stage: 'specify' })
+    });
+    assert.equal(response.status, 201);
+
+    const resumed = await waiting;
+    assert.equal(resumed.type, 'workflow.wait.completed');
+    assert.equal(resumed.currentStage, 'design');
+    assert.equal(resumed.stageStatus, 'ready');
+  } finally {
+    await server.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
