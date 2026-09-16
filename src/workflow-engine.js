@@ -147,7 +147,13 @@ class WorkflowEngine {
   }
   resume(args) {
     const state = this.load(args);
-    return { type: 'workflow.resumed', workflowId: state.workflowId, currentStage: state.currentStage, status: state.stages[state.currentStage].status, next: { command: `dev-workflow next --id ${state.workflowId}` };
+    return {
+      type: 'workflow.resumed',
+      workflowId: state.workflowId,
+      currentStage: state.currentStage,
+      status: state.stages[state.currentStage].status,
+      next: { command: `dev-workflow next --id ${state.workflowId}` }
+    };
   }
   format(result) {
     if (result.type === 'workflow.action') {
