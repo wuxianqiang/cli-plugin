@@ -9,11 +9,10 @@ const { WorkflowEngine } = require('../src/workflow-engine');
 const { WorkflowWebServer } = require('../src/web-server');
 const { initialState } = require('../src/workflow');
 
-test('web server exposes workflow state and annotations', async () => {
+test('web server exposes workflow state and annotations without workflow controls', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
   const store = new WorkflowStore(root);
-  const state = initialState('web-test', 'add modal');
-  store.create(state);
+  store.create(initialState('web-test', 'add modal'));
   const engine = new WorkflowEngine(store);
   const server = new WorkflowWebServer(store, engine, { port: 0 });
   const address = await server.start();
@@ -24,54 +23,27 @@ test('web server exposes workflow state and annotations', async () => {
 
     const annotationResponse = await fetch(`${address.url}/api/workflows/web-test/annotations`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type: 'custom', content: '补充移动端场景', target: { quote: 'modal' } })
+      body: JSON.stringify({ type: 'custom', content: '补充移动端场景', stage: 'specify', target: { quote: 'modal' } })
     });
     assert.equal(annotationResponse.status, 201);
     assert.equal((await annotationResponse.json()).content, '补充移动端场景');
 
     const annotations = await fetch(`${address.url}/api/workflows/web-test/annotations`).then(r => r.json());
     assert.equal(annotations.length, 1);
-  } finally {
-    await server.stop();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
 
-test('browser approval changes shared state so wait can resume', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-wait-'));
-  const store = new WorkflowStore(root);
-  const state = initialState('wait-test', 'add modal');
-  store.create(state);
-  const engine = new WorkflowEngine(store);
-  const server = new WorkflowWebServer(store, engine, { port: 0 });
-  const address = await server.start();
-
-  try {
-    const action = await engine.run({ command: 'next', id: 'wait-test' });
-    fs.mkdirSync(path.join(root, '.dev/workflows/wait-test/artifacts'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.dev/workflows/wait-test/artifacts/specify.md'), '# Specify');
-    await engine.run({ command: 'result', id: 'wait-test', action: action.id, status: 'success', artifact: '.dev/workflows/wait-test/artifacts/specify.md' });
-
-    const waiting = engine.run({ command: 'wait', id: 'wait-test', timeout: 3000, interval: 20 });
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    const response = await fetch(`${address.url}/api/workflows/wait-test/decisions`, {
+    const decisionResponse = await fetch(`${address.url}/api/workflows/web-test/decisions`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'approve', stage: 'specify' })
     });
-    assert.equal(response.status, 201);
-
-    const resumed = await waiting;
-    assert.equal(resumed.type, 'workflow.wait.completed');
-    assert.equal(resumed.currentStage, 'design');
-    assert.equal(resumed.stageStatus, 'ready');
+    assert.equal(decisionResponse.status, 404);
+    assert.equal(store.read('web-test').currentStage, 'specify');
   } finally {
     await server.stop();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('docs comments transition waiting approval back to ready and are injected into next action', async () => {
+test('CLI apply-comments transitions waiting approval back to ready and injects open docs comments', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-comments-'));
   const store = new WorkflowStore(root);
   store.create(initialState('comments-test', 'add modal'));
@@ -89,12 +61,13 @@ test('docs comments transition waiting approval back to ready and are injected i
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'change', content: '补充移动端处理', stage: 'specify', target: { quote: 'Please add mobile handling.', start: 10, end: 36 } })
     });
-    const decision = await fetch(`${address.url}/api/workflows/comments-test/decisions`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'apply-comments', stage: 'specify' })
-    });
-    assert.equal(decision.status, 201);
+
+    assert.equal(store.read('comments-test').stages.specify.status, 'waiting_approval');
+
+    const transition = await engine.run({ command: 'apply-comments', id: 'comments-test' });
+    assert.equal(transition.type, 'workflow.transition');
     assert.equal(store.read('comments-test').stages.specify.status, 'ready');
+    assert.equal(transition.annotations, 1);
 
     const next = await engine.run({ command: 'next', id: 'comments-test' });
     assert.equal(next.input.annotations.length, 1);
@@ -102,6 +75,28 @@ test('docs comments transition waiting approval back to ready and are injected i
     assert.match(next.input.feedback, /Apply the open Docs comments/);
   } finally {
     await server.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('waiting approval exposes CLI commands for AskUserQuestion decisions', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-approval-'));
+  const store = new WorkflowStore(root);
+  store.create(initialState('approval-test', 'add modal'));
+  const engine = new WorkflowEngine(store);
+
+  try {
+    const action = await engine.run({ command: 'next', id: 'approval-test' });
+    fs.mkdirSync(path.join(root, '.dev/workflows/approval-test/artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dev/workflows/approval-test/artifacts/specify.md'), '# Specify');
+    await engine.run({ command: 'result', id: 'approval-test', action: action.id, status: 'success', artifact: '.dev/workflows/approval-test/artifacts/specify.md' });
+
+    const approval = await engine.run({ command: 'next', id: 'approval-test' });
+    assert.equal(approval.type, 'workflow.approval_required');
+    assert.match(approval.actions.approve.command, /dev-workflow approve/);
+    assert.match(approval.actions.applyComments.command, /dev-workflow apply-comments/);
+    assert.match(approval.actions.revise.command, /dev-workflow revise/);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
