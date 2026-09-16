@@ -108,7 +108,7 @@ test('clarify command persists a decision and returns the next command', async (
   const engine = new WorkflowEngine(new WorkflowStore(root));
 
   await engine.run({ command: 'init', name: 'demo', request: 'Add export' });
-  await engine.run({ command: 'next', id: 'demo' });
+  const action = await engine.run({ command: 'next', id: 'demo' });
 
   const result = await engine.run({
     command: 'clarify',
@@ -124,8 +124,10 @@ test('clarify command persists a decision and returns the next command', async (
   assert.equal(result.decision.choice, 'B');
   assert.equal(result.next.command, 'dev-workflow next --id demo');
 
-  const state = await engine.run({ command: 'status', id: 'demo' });
-  assert.equal(state.clarification.decisions[0].answer, 'async');
+  const resumed = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(resumed.type, 'workflow.action');
+  assert.equal(resumed.id, action.id);
+  assert.equal(resumed.input.clarification.decisions[0].answer, 'async');
 });
 
 test('workflow action declares direct execution for lightweight skills', async () => {
