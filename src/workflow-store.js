@@ -11,6 +11,7 @@ class WorkflowStore {
   statePath(id) { return path.join(this.dir(id), 'state.json'); }
   historyPath(id) { return path.join(this.dir(id), 'history.jsonl'); }
   annotationPath(id) { return path.join(this.dir(id), 'annotations.json'); }
+  webSessionPath(id) { return path.join(this.dir(id), 'web.json'); }
   artifactDir(id) { return path.join(this.dir(id), 'artifacts'); }
   ensure(id) { fs.mkdirSync(this.artifactDir(id), { recursive: true }); }
   exists(id) { return fs.existsSync(this.statePath(id)); }
@@ -55,6 +56,19 @@ class WorkflowStore {
     const value = { id: decision.id || `decision_${Date.now()}`, workflowId: id, createdAt: new Date().toISOString(), ...decision };
     this.appendHistory({ type: 'human.decision', workflowId: id, decision: value });
     return value;
+  }
+  readWebSession(id) {
+    const file = this.webSessionPath(id);
+    if (!fs.existsSync(file)) return null;
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  }
+  writeWebSession(id, session) {
+    this.ensure(id);
+    fs.writeFileSync(this.webSessionPath(id), JSON.stringify(session, null, 2) + '\n');
+  }
+  clearWebSession(id) {
+    const file = this.webSessionPath(id);
+    if (fs.existsSync(file)) fs.rmSync(file, { force: true });
   }
   appendHistory(event) {
     fs.appendFileSync(this.historyPath(event.workflowId), JSON.stringify({ ...event, timestamp: new Date().toISOString() }) + '\n');
