@@ -6,7 +6,7 @@ let documentText = '';
 const stages = ['specify', 'design', 'tasks', 'implement', 'review'];
 const $ = id => document.getElementById(id);
 const stageLabel = s => ({ specify: 'Specify', design: 'Design', tasks: 'Tasks', implement: 'Implement', review: 'Review' })[s] || s;
-const statusLabel = s => ({ pending: '待开始', ready: '待执行', running: 'Agent 执行中', waiting_approval: '等待人工确认', completed: '已完成', failed: '执行失败' })[s] || s;
+const statusLabel = s => ({ pending: '待开始', ready: '待执行', running: 'Agent 执行中', waiting_approval: '等待 CLI 确认', completed: '已完成', failed: '执行失败' })[s] || s;
 const esc = value => String(value ?? '').replace(/[&<>\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));
 
 async function loadData() {
@@ -40,23 +40,8 @@ function render() {
   }).join('');
   $('stage-title').textContent = stageLabel(state.currentStage);
   $('stage-status').textContent = statusLabel(state.stages[state.currentStage].status);
-  renderActions();
   renderDocument();
   renderAnnotations();
-}
-
-function renderActions() {
-  const st = state.stages[state.currentStage];
-  if (st.status === 'waiting_approval') {
-    $('actions').innerHTML = `
-      <button class="btn primary" onclick="decision('approve')">通过并进入下一阶段</button>
-      <button class="btn comment-action" onclick="decision('apply-comments')">拉取 Docs 评论并重新修改</button>
-      <button class="btn warning" onclick="revise()">直接修改文档</button>`;
-  } else if (st.status === 'failed') {
-    $('actions').innerHTML = '<button class="btn primary" onclick="decision(\'retry\')">重试</button>';
-  } else {
-    $('actions').innerHTML = '';
-  }
 }
 
 function markdownInline(value) {
@@ -120,7 +105,7 @@ function renderDocument() {
   }
   const artifact = (state.stages[state.currentStage].artifact || '').split('/artifacts/')[1] || 'artifact';
   $('document').innerHTML = `
-    <div class="doc-toolbar"><span class="badge">${esc(artifact)}</span><span class="hint">选中文字后点击「添加评论」，评论会以划线标记在文档中。</span></div>
+    <div class="doc-toolbar"><span class="badge">${esc(artifact)}</span><span class="hint">选中文字后点击「添加评论」，评论会以划线标记在文档中。流程推进和修改决策请在 CLI / Claude 对话中完成。</span></div>
     <div class="markdown" id="doc-text">${renderMarkdown()}</div>
     <div class="doc-tools"><button class="btn" onclick="addAnnotation()">＋ 添加评论</button></div>`;
 }
@@ -135,7 +120,7 @@ function renderAnnotations() {
 }
 
 function renderActivity() {
-  $('activity').innerHTML = `<div class="empty">当前阶段：${stageLabel(state.currentStage)} · ${statusLabel(state.stages[state.currentStage].status)}</div>`;
+  $('activity').innerHTML = `<div class="empty">当前阶段：${stageLabel(state.currentStage)} · ${statusLabel(state.stages[state.currentStage].status)}<br>网页仅用于 Docs 阅读与评论，流程控制由 CLI / Claude 对话负责。</div>`;
 }
 
 function connect() {
@@ -143,16 +128,6 @@ function connect() {
   es.onopen = () => { $('connection').textContent = '● Connected'; $('connection').className = 'status ok'; };
   es.onerror = () => { $('connection').textContent = '● Reconnecting'; $('connection').className = 'status waiting'; };
   es.addEventListener('annotation.created', e => { annotations.push(JSON.parse(e.data).annotation); renderDocument(); renderAnnotations(); });
-  es.addEventListener('workflow.updated', async e => {
-    state = JSON.parse(e.data).state;
-    const [a, d] = await Promise.all([
-      fetch(`/api/workflows/${encodeURIComponent(workflowId)}/annotations`).then(r => r.json()),
-      fetch(`/api/workflows/${encodeURIComponent(workflowId)}/document`).then(r => r.json())
-    ]);
-    annotations = a;
-    documentText = d.content || '';
-    render();
-  });
 }
 
 async function addAnnotation() {
@@ -169,18 +144,6 @@ async function addAnnotation() {
     body: JSON.stringify({ type, content, stage: state.currentStage, target: { quote, start, end: start + quote.length } })
   });
   sel.removeAllRanges();
-}
-
-async function decision(action) {
-  await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/decisions`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, stage: state.currentStage })
-  });
-}
-
-async function revise() {
-  const feedback = prompt('请输入修改意见：');
-  if (feedback) decision(`revise:${feedback}`);
 }
 
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
