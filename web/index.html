@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SDD Workflow</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><strong>SDD Workflow</strong><span id="workflow-name"></span></div>
+    <div id="connection" class="status">● Connecting</div>
+  </header>
+  <main>
+    <section class="timeline" id="timeline"></section>
+    <section class="layout">
+      <aside>
+        <h3>当前阶段</h3>
+        <div id="stage-card"></div>
+        <h3>阶段状态</h3>
+        <div id="stage-list"></div>
+      </aside>
+      <article>
+        <div class="workspace-head">
+          <div><h1 id="stage-title">Workflow</h1><p id="stage-status"></p></div>
+          <div id="actions"></div>
+        </div>
+        <div class="tabs"><button class="active" data-tab="document">Document</button><button data-tab="annotations">Annotations</button><button data-tab="activity">Activity</button></div>
+        <div id="document" class="panel"></div>
+        <div id="annotations" class="panel hidden"></div>
+        <div id="activity" class="panel hidden"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
