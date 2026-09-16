@@ -29,6 +29,7 @@ For example:
 node ./bin/dev-workflow.js next --id <workflow-id> --json
 node ./bin/dev-workflow.js wait --id <workflow-id> --json
 node ./bin/dev-workflow.js approve --id <workflow-id> --json
+node ./bin/dev-workflow.js apply-comments --id <workflow-id> --json
 node ./bin/dev-workflow.js web --id <workflow-id>
 ```
 
@@ -67,17 +68,15 @@ workflow.result
  ↓
 workflow.approval_required
  ↓
-┌──────────────────────────────┐
-│ Browser approval              │
-│ OR                            │
-│ Claude conversation approval  │
-└──────────────┬───────────────┘
-               ↓
-approve / revise
-               ↓
-next
-               ↓
-next workflow.action
+┌──────────────────────────────────────────────┐
+│ Browser / Claude approval                    │
+│                                              │
+│ 通过 → 下一阶段                               │
+│                                              │
+│ Docs 评论 → 拉取评论 → Agent 修改 → 再审批   │
+│                                              │
+│ 直接反馈 → Agent 修改 → 再审批               │
+└──────────────────────────────────────────────┘
 ```
 
 Every stage requires explicit human approval.
@@ -108,38 +107,34 @@ When `workflow.result` returns `status=waiting_approval`:
 node ./bin/dev-workflow.js wait --id <workflow-id> --json
 ```
 
-4. `wait` blocks until the workflow state changes. The browser `approve`, `revise`, or `retry` endpoint changes the same state store.
+4. `wait` blocks until the workflow state changes. The browser `approve`, `apply-comments`, `revise`, or `retry` endpoint changes the same state store.
 5. When `wait` returns `workflow.wait.completed`, execute its exact `next.command`.
 6. Continue with the returned `workflow.action`.
 
-This is what makes the following flow work:
+## Docs Comment Revision
 
-```text
-Claude tool call: node ./bin/dev-workflow.js wait
-          │
-          │ process remains alive
-          │
-          ▼
-      Browser click
-          │
-          ▼
-   Web Server → WorkflowEngine
-          │
-          ▼
-     state.json updated
-          │
-          ▼
-       wait exits
-          │
-          ▼
-      LLM receives result
-          │
-          ▼
-       next command
-          │
-          ▼
-        Design
-```
+When a stage is `waiting_approval`, the Browser Markdown preview supports selecting text and adding a typed annotation. Each annotation must retain:
+
+- current stage
+- selected quote
+- source start/end offsets when available
+- human comment
+- annotation type
+
+Annotations are persisted in the workflow's shared `.dev` state and are visible to both Browser and CLI.
+
+If the user clicks **“拉取 Docs 评论并重新修改”**:
+
+1. The Web server records the human decision.
+2. The workflow transitions the current stage from `waiting_approval` to `ready`.
+3. The CLI `wait` process wakes up because the shared state changed.
+4. Execute the exact `next.command` returned by `wait`.
+5. The resulting `workflow.action.input.annotations` contains the open annotations for the current stage.
+6. The stage Skill must review every annotation, use its target quote as context, and update the current artifact accordingly.
+7. Complete the stage with the normal `workflow.result` command.
+8. The stage returns to `waiting_approval`, allowing another Browser review cycle.
+
+Do not silently mark Docs annotations as resolved before the Agent has incorporated them into the artifact. The open annotation list is the authoritative human feedback for the revision pass.
 
 ### Claude Conversation Approval
 
@@ -183,5 +178,6 @@ After a Skill/Subagent finishes:
 2. Execute the exact `completion.command` returned by the workflow action, or its failure command.
 3. Execute the exact continuation command.
 4. If the result is `workflow.approval_required`, use the Browser/Claude approval synchronization protocol above.
+5. If the user selected Docs comments, execute the returned `next.command`; do not manually reconstruct the annotation payload.
 
 Never automatically approve a completed stage.
