@@ -34,6 +34,7 @@ class WorkflowEngine {
     const current = state.stages[stage];
     const execution = getExecutionConfig(stage);
     const artifactPath = `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`;
+    const clarificationEnabled = stage === 'specify' || stage === 'design';
     return {
       type: 'workflow.action',
       id: actionId,
@@ -48,7 +49,7 @@ class WorkflowEngine {
         feedback: current.feedback,
         clarification: state.clarification
       },
-      clarification: stage === 'specify' ? {
+      clarification: clarificationEnabled ? {
         enabled: true,
         recordCommand: `dev-workflow clarify --id ${state.workflowId} --question-id "<question-id>" --question "<question>" --choice "<choice>" --answer "<user-answer>"`
       } : { enabled: false },
@@ -87,9 +88,9 @@ class WorkflowEngine {
       };
     }
 
-    // Specify remains one running action while it asks multiple clarification questions.
+    // Specify and Design remain the same running action while they ask clarification questions.
     // Returning the same action ID lets the LLM continue the skill without starting another attempt.
-    if (current.status === 'running' && stage === 'specify' && state.currentAction?.id) {
+    if (current.status === 'running' && (stage === 'specify' || stage === 'design') && state.currentAction?.id) {
       return this.buildAction(state, stage, state.currentAction.id);
     }
 
