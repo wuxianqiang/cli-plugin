@@ -15,16 +15,25 @@ async function loadData() {
     fetch(`/api/workflows/${encodeURIComponent(workflowId)}/annotations`).then(r => r.json()),
     fetch(`/api/workflows/${encodeURIComponent(workflowId)}/document`).then(r => r.json())
   ]);
+  if (s.error) throw new Error(s.error);
+  if (d.error) throw new Error(d.error);
   state = s;
-  annotations = a;
+  annotations = Array.isArray(a) ? a : [];
   documentText = d.content || '';
   render();
 }
 
 async function load() {
   if (!workflowId) { $('stage-title').textContent = '缺少 workflowId'; return; }
-  await loadData();
-  connect();
+  try {
+    await loadData();
+    connect();
+  } catch (error) {
+    $('stage-title').textContent = '文档加载失败';
+    $('stage-status').textContent = error.message;
+    $('document').innerHTML = `<div class="empty">无法加载当前阶段 Markdown：${esc(error.message)}</div>`;
+    console.error(error);
+  }
 }
 
 function render() {
@@ -54,12 +63,16 @@ function markdownInline(value) {
   return html;
 }
 
-function lineHtml(line, startOffset, endOffset) {
-  const ranges = annotations
+function annotationRanges(startOffset, endOffset) {
+  return annotations
     .filter(a => a.status === 'open' && a.stage === state.currentStage && Number.isInteger(a.target?.start) && Number.isInteger(a.target?.end))
     .map(a => ({ ...a, start: Math.max(startOffset, a.target.start), end: Math.min(endOffset, a.target.end) }))
     .filter(a => a.start < a.end)
     .sort((a, b) => a.start - b.start);
+}
+
+function lineHtml(line, startOffset, endOffset) {
+  const ranges = annotationRanges(startOffset, endOffset);
   if (!ranges.length) return markdownInline(line);
   let html = '', cursor = startOffset;
   for (const a of ranges) {
@@ -75,38 +88,77 @@ function renderMarkdown() {
   const lines = documentText.split('\n');
   let offset = 0;
   let inCode = false;
-  const html = lines.map(line => {
+  const output = [];
+
+  for (const line of lines) {
     const start = offset;
     const end = start + line.length;
     offset = end + 1;
+
     if (/^\s*```/.test(line)) {
       inCode = !inCode;
-      return `<div class="md-code-fence">${esc(line)}</div>`;
+      output.push(`<div class="md-code-fence">${esc(line)}</div>`);
+      continue;
     }
-    if (inCode) return `<div class="md-code-line">${lineHtml(line, start, end)}</div>`;
-    if (!line.trim()) return '<div class="md-blank"></div>';
-    const content = lineHtml(line, start, end);
-    if (/^###\s+/.test(line)) return `<h4>${content.replace(/^###\s+/, '')}</h4>`;
-    if (/^##\s+/.test(line)) return `<h3>${content.replace(/^##\s+/, '')}</h3>`;
-    if (/^#\s+/.test(line)) return `<h2>${content.replace(/^#\s+/, '')}</h2>`;
-    if (/^>\s?/.test(line)) return `<blockquote>${content.replace(/^&gt;\s?/, '')}</blockquote>`;
-    if (/^[-*]\s+/.test(line)) return `<div class="md-list">• ${content.replace(/^[-*]\s+/, '')}</div>`;
-    if (/^\d+\.\s+/.test(line)) return `<div class="md-list">${esc(line.match(/^\d+/)[0])}. ${content.replace(/^\d+\.\s+/, '')}</div>`;
-    if (/^---+$/.test(line.trim())) return '<hr>';
-    return `<p>${content}</p>`;
-  }).join('');
-  return html;
+    if (inCode) {
+      output.push(`<div class="md-code-line">${lineHtml(line, start, end)}</div>`);
+      continue;
+    }
+    if (!line.trim()) {
+      output.push('<div class="md-blank"></div>');
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      const level = Math.min(6, heading[1].length);
+      const prefixLength = heading[1].length + 1;
+      const content = lineHtml(line.slice(prefixLength), start + prefixLength, end);
+      output.push(`<h${level}>${content}</h${level}>`);
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const prefixLength = line.match(/^>\s?/)[0].length;
+      output.push(`<blockquote>${lineHtml(line.slice(prefixLength), start + prefixLength, end)}</blockquote>`);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const prefixLength = line.match(/^[-*]\s+/)[0].length;
+      output.push(`<div class="md-list">• ${lineHtml(line.slice(prefixLength), start + prefixLength, end)}</div>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const match = line.match(/^(\d+)\.\s+/);
+      const prefixLength = match[0].length;
+      output.push(`<div class="md-list">${match[1]}. ${lineHtml(line.slice(prefixLength), start + prefixLength, end)}</div>`);
+      continue;
+    }
+    if (/^---+$/.test(line.trim())) {
+      output.push('<hr>');
+      continue;
+    }
+    output.push(`<p>${lineHtml(line, start, end)}</p>`);
+  }
+
+  return output.join('');
 }
 
 function renderDocument() {
   if (!documentText) {
-    $('document').innerHTML = '<div class="empty">当前阶段尚未生成文档</div>';
+    $('document').innerHTML = '<div class="empty">当前阶段尚未生成 Markdown 文档</div>';
     return;
   }
   const artifact = (state.stages[state.currentStage].artifact || '').split('/artifacts/')[1] || 'artifact';
+  let markdownHtml;
+  try {
+    markdownHtml = renderMarkdown();
+  } catch (error) {
+    console.error('Markdown render failed', error);
+    markdownHtml = `<pre class="markdown-fallback">${esc(documentText)}</pre>`;
+  }
   $('document').innerHTML = `
     <div class="doc-toolbar"><span class="badge">${esc(artifact)}</span><span class="hint">选中文字后点击「添加评论」，评论会以划线标记在文档中。流程推进和修改决策请在 CLI / Claude 对话中完成。</span></div>
-    <div class="markdown" id="doc-text">${renderMarkdown()}</div>
+    <div class="markdown" id="doc-text">${markdownHtml}</div>
     <div class="doc-tools"><button class="btn" onclick="addAnnotation()">＋ 添加评论</button></div>`;
 }
 
@@ -127,7 +179,12 @@ function connect() {
   const es = new EventSource(`/events?workflowId=${encodeURIComponent(workflowId)}`);
   es.onopen = () => { $('connection').textContent = '● Connected'; $('connection').className = 'status ok'; };
   es.onerror = () => { $('connection').textContent = '● Reconnecting'; $('connection').className = 'status waiting'; };
-  es.addEventListener('annotation.created', e => { annotations.push(JSON.parse(e.data).annotation); renderDocument(); renderAnnotations(); });
+  es.addEventListener('annotation.created', e => {
+    const annotation = JSON.parse(e.data).annotation;
+    annotations.push(annotation);
+    renderDocument();
+    renderAnnotations();
+  });
 }
 
 async function addAnnotation() {
@@ -139,10 +196,11 @@ async function addAnnotation() {
   const type = prompt('评论类型（requirement / question / change / custom）：', 'change') || 'custom';
   const start = documentText.indexOf(quote);
   if (start < 0) { alert('无法定位选中的文档内容，请重新选择。'); return; }
-  await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/annotations`, {
+  const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/annotations`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, content, stage: state.currentStage, target: { quote, start, end: start + quote.length } })
   });
+  if (!response.ok) { alert('评论保存失败，请重试。'); return; }
   sel.removeAllRanges();
 }
 
