@@ -4,27 +4,12 @@ const STAGES = ['specify', 'design', 'tasks', 'implement', 'review'];
 const VALID_STAGE_STATUSES = ['pending', 'ready', 'running', 'completed', 'failed', 'waiting_approval'];
 const CLARIFICATION_STAGES = ['specify', 'design'];
 
-// The CLI declares how a stage should be executed; it never dispatches agents itself.
-// This keeps workflow/state management separate from LLM orchestration.
 const EXECUTION_CONFIG = {
   specify: { mode: 'direct', strategy: 'single', agent: null },
   design: { mode: 'direct', strategy: 'single', agent: null },
   tasks: { mode: 'direct', strategy: 'single', agent: null },
-  implement: {
-    mode: 'subagent',
-    strategy: 'single',
-    agent: { name: 'implement-agent', role: 'implementation' }
-  },
-  review: {
-    mode: 'subagent',
-    strategy: 'parallel',
-    agents: [
-      'security-review',
-      'performance-review',
-      'architecture-review',
-      'stability-review'
-    ]
-  }
+  implement: { mode: 'subagent', strategy: 'single', agent: { name: 'implement-agent', role: 'implementation' } },
+  review: { mode: 'subagent', strategy: 'parallel', agents: ['security-review', 'performance-review', 'architecture-review', 'stability-review'] }
 };
 
 function getExecutionConfig(stage) {
@@ -38,14 +23,8 @@ function initialState(workflowId, request) {
     status: index === 0 ? 'ready' : 'pending', attempt: 0, artifact: null, feedback: null
   }]));
   return {
-    version: '1.0', workflowId, request, status: 'running', currentStage: 'specify',
-    currentAction: null,
-    clarification: {
-      status: 'not_started',
-      questions: [],
-      decisions: []
-    },
-    stages, artifacts: [], history: []
+    version: '1.0', workflowId, request, status: 'running', currentStage: 'specify', currentAction: null,
+    clarification: { status: 'not_started', questions: [], decisions: [] }, stages, artifacts: [], history: []
   };
 }
 
@@ -61,26 +40,10 @@ function transition(state, event, payload = {}) {
     return;
   }
   if (event === 'clarify') {
-    if (!CLARIFICATION_STAGES.includes(stage) || current.status !== 'running') {
-      throw Object.assign(new Error(`Clarification can only be recorded while ${stage} is running`), { code: 'CLARIFICATION_NOT_ACTIVE' });
-    }
-    if (!payload.questionId || !payload.question || !payload.choice || !payload.answer) {
-      throw Object.assign(new Error('clarify requires --question-id, --question, --choice and --answer'), { code: 'INVALID_ARGUMENTS' });
-    }
-    const question = {
-      id: payload.questionId,
-      stage,
-      question: payload.question,
-      choices: payload.choices || [],
-      status: 'resolved'
-    };
-    state.clarification.questions.push(question);
-    state.clarification.decisions.push({
-      questionId: payload.questionId,
-      stage,
-      choice: payload.choice,
-      answer: payload.answer
-    });
+    if (!CLARIFICATION_STAGES.includes(stage) || current.status !== 'running') throw Object.assign(new Error(`Clarification can only be recorded while ${stage} is running`), { code: 'CLARIFICATION_NOT_ACTIVE' });
+    if (!payload.questionId || !payload.question || !payload.choice || !payload.answer) throw Object.assign(new Error('clarify requires --question-id, --question, --choice and --answer'), { code: 'INVALID_ARGUMENTS' });
+    state.clarification.questions.push({ id: payload.questionId, stage, question: payload.question, choices: payload.choices || [], status: 'resolved' });
+    state.clarification.decisions.push({ questionId: payload.questionId, stage, choice: payload.choice, answer: payload.answer });
     state.clarification.status = 'in_progress';
     return;
   }
@@ -105,6 +68,13 @@ function transition(state, event, payload = {}) {
   if (event === 'revise') {
     if (current.status !== 'waiting_approval') throw Object.assign(new Error(`Stage ${stage} is not awaiting approval`), { code: 'NOT_AWAITING_APPROVAL' });
     current.status = 'ready'; current.feedback = payload.feedback || null; state.currentAction = null; return;
+  }
+  if (event === 'apply_comments') {
+    if (current.status !== 'waiting_approval') throw Object.assign(new Error(`Stage ${stage} is not awaiting approval`), { code: 'NOT_AWAITING_APPROVAL' });
+    current.status = 'ready';
+    current.feedback = payload.feedback || null;
+    state.currentAction = null;
+    return;
   }
   if (event === 'retry') {
     if (current.status !== 'failed') throw Object.assign(new Error(`Stage ${stage} is not failed`), { code: 'STAGE_NOT_FAILED' });
