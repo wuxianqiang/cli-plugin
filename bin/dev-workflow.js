@@ -4,7 +4,7 @@
 const { execFile, spawn } = require('node:child_process');
 const { WorkflowStore } = require('../src/workflow-store');
 const { WorkflowEngine } = require('../src/workflow-engine');
-const { WorkflowWebServer } = require('../src/web-server');
+const { DocsWebServer } = require('../src/docs-web-server');
 const { parseArgs } = require('../src/args');
 
 function openBrowser(url) {
@@ -43,7 +43,7 @@ async function main() {
     const workflowId = args.id || args.workflow || args.name;
     if (!workflowId) throw Object.assign(new Error('web requires --id'), { code: 'INVALID_ARGUMENTS' });
     store.read(workflowId);
-    const server = new WorkflowWebServer(store, engine, { port: args.port ? Number(args.port) : 0 });
+    const server = new DocsWebServer(store, { port: args.port ? Number(args.port) : 0 });
     const address = await server.start();
     const url = `${address.url}/?workflowId=${encodeURIComponent(workflowId)}`;
     store.writeWebSession(workflowId, { pid: process.pid, url, port: address.port, startedAt: new Date().toISOString() });
