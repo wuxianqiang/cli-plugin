@@ -1,3 +1,17 @@
+# ⚠️ 重要执行环境说明
+
+**当前插件已知存在一个实际问题：Claude Code 可能无法直接识别或执行插件 `bin/` 目录暴露的 `dev-workflow` 命令。即使仓库中已经正确配置 `bin/`，Claude Code 仍可能出现 `command not found`、`dev-workflow: not found` 或无法解析该命令的情况。**
+
+因此，在执行本 Skill 时必须牢记：
+
+- **不要假设 `dev-workflow` 裸命令一定可以执行。**
+- 遇到命令无法识别时，不要把它判断为 workflow 本身失败。
+- 必须优先检查并使用仓库实际可用的本地 CLI 入口。
+- CLI 返回的 `command` 负责定义 workflow 的状态和参数；**不要修改命令语义，只解决 CLI 入口无法执行的问题。**
+- 如果当前环境确实无法通过任何已知入口执行 CLI，应明确向用户报告“CLI 执行入口问题”，而不是伪造 workflow 状态或自行推进阶段。
+
+**这不是可忽略的兼容性说明，而是当前 `dev-workflow` 插件执行时必须遵守的前置约束。**
+
 ---
 name: dev-workflow
 description: 通过读取 workflow action、将任务路由到直接 Skill 或子代理、收集结构化结果并推进 CLI 状态机，编排 CLI 驱动的研发工作流。
