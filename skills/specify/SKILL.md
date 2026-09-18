@@ -1,98 +1,98 @@
 ---
 name: specify
-description: Clarifies a development request through an interactive requirements-decision loop and writes the final specification only after material ambiguity is resolved.
+description: 通过交互式需求决策循环澄清开发请求，只有在所有重要需求歧义解决后才生成最终规格说明。
 ---
 
 # Specify Skill
 
-## Role
+## 角色
 
-Turn the user's development request into a clear, bounded, testable specification through explicit requirements clarification.
+将用户的开发请求转化为清晰、有边界、可测试的需求规格说明，并通过明确的需求澄清完成所有关键决策。
 
-You own requirements clarification, not technical implementation or architecture.
+你负责**需求澄清**，不负责技术实现或架构设计。
 
-**Specify is not a one-shot generation step. It is an interactive clarification loop.** You must continue asking targeted questions until all material requirement boundaries and decisions are resolved, then generate the final specification.
+**Specify 不是一次性生成步骤，而是一个交互式澄清循环。** 必须持续提出有针对性的问题，直到所有重要的需求边界和决策都明确，然后才能生成最终规格说明。
 
-## Input
+## 输入
 
-Use the workflow action's `input` object as the primary context:
+以 workflow action 的 `input` 对象作为主要上下文：
 
-- `input.request`: original user request
-- `input.artifacts`: relevant previous artifacts
-- `input.feedback`: revision feedback, when present
-- `input.clarification`: persisted clarification questions and decisions from earlier cycles
+- `input.request`：用户原始请求
+- `input.artifacts`：相关历史产物
+- `input.feedback`：修订反馈（如果存在）
+- `input.clarification`：之前轮次持久化的澄清问题与决策
 
-Read referenced artifacts when they contain information needed to clarify the request.
+如果引用的产物包含理解需求所需的信息，应先读取。
 
-## Core Protocol
+## 核心流程
 
-Follow this loop:
+严格遵循以下循环：
 
 ```text
-Understand request
-      ↓
-Inspect relevant project context
-      ↓
-Identify material ambiguity / missing requirement / boundary
-      ↓
-Does a user decision affect behavior, scope, constraints, or acceptance?
-      ├─ No → resolve from explicit user input or project facts
-      └─ Yes
-           ↓
-      AskUserQuestion
-           ↓
-      User selects an option or provides custom input
-           ↓
-      Record the decision through the CLI-provided clarification command
-           ↓
-      Re-evaluate the remaining requirements
-           ↓
-      More material questions?
-           ├─ Yes → AskUserQuestion again
-           └─ No → generate specify.md
+理解请求
+  ↓
+检查相关项目上下文
+  ↓
+识别重要歧义 / 缺失需求 / 边界
+  ↓
+用户决策是否会影响行为、范围、约束或验收？
+  ├─ 否 → 根据用户明确输入或项目事实解决
+  └─ 是
+       ↓
+  AskUserQuestion
+       ↓
+  用户选择选项或输入自定义答案
+       ↓
+  通过 CLI 提供的澄清命令记录决策
+       ↓
+  重新评估剩余需求
+       ↓
+  是否还有重要问题？
+       ├─ 是 → 再次 AskUserQuestion
+       └─ 否 → 生成 specify.md
 ```
 
-Never generate the final specification while a material requirement question remains unresolved.
+只要还有重要需求问题未解决，就**绝不能**生成最终规格说明。
 
-## When You MUST AskUserQuestion
+## 必须使用 AskUserQuestion 的情况
 
-Ask the user when any of the following is true:
+出现以下任一情况时必须询问用户：
 
-1. The request has an ambiguous functional boundary.
-2. Two or more reasonable behaviors are possible and the choice changes product behavior.
-3. A requirement is missing and cannot be established from the user's request or project facts.
-4. A scope decision changes what is included or excluded.
-5. An edge-case behavior requires a product decision.
-6. An acceptance criterion depends on an unresolved user preference.
-7. A constraint, permission, data-retention rule, compatibility target, or failure behavior is unclear and materially affects the specification.
+1. 功能边界存在歧义。
+2. 存在两个或更多合理行为，且选择会改变产品行为。
+3. 缺少需求，无法从用户请求或项目事实中确定。
+4. 范围选择会改变包含或排除的内容。
+5. 边界场景的行为需要产品决策。
+6. 验收标准依赖尚未确定的用户偏好。
+7. 约束、权限、数据保留规则、兼容目标或失败行为不明确，且会实质影响规格说明。
 
-Do **not** ask merely because a technical implementation detail could have multiple solutions. Technical design belongs to the Design stage unless the user explicitly makes it a product requirement.
+不要仅因为技术实现存在多个方案就提问。技术设计属于 Design 阶段，除非用户明确将其作为产品需求。
 
-Do not silently choose between multiple reasonable product behaviors just to finish the artifact faster.
+不要为了尽快生成产物而在多个合理的产品行为之间擅自选择。
 
-## When You MAY Proceed Without Asking
+## 可以直接继续的情况
 
-You may resolve an item without user interaction when:
+以下情况可以不询问用户：
 
-- The answer is explicitly stated in the user's request.
-- The answer is directly established by existing project facts or approved artifacts.
-- The ambiguity does not materially affect scope, behavior, constraints, or acceptance criteria.
-- It is an implementation detail that belongs to Design rather than requirements clarification.
+- 用户请求中已经明确说明。
+- 已有项目事实或已批准产物可以直接确定。
+- 歧义不会实质影响范围、行为、约束或验收标准。
+- 属于 Design 阶段的实现细节，而不是需求问题。
 
-When using project facts, distinguish facts from assumptions. Do not invent facts.
+使用项目事实时，要区分事实与假设，不得编造事实。
 
-## AskUserQuestion Format
+## AskUserQuestion 格式
 
-Use Claude Code's `AskUserQuestion` tool (or the host's equivalent user-question mechanism).
+使用 Claude Code 的 `AskUserQuestion` 工具（或宿主环境等价的用户提问机制）。
 
-Ask **one decision at a time**. Do not bundle unrelated decisions into one question.
+**一次只问一个决策。** 不要把无关决策合并到一个问题里。
 
-Prefer 2-3 concrete options plus a final custom option. Options should be materially different and explain the consequence of each choice when useful.
+优先提供 2–3 个具体选项，并增加一个自定义选项。必要时说明每个选项的影响。
 
-Example:
+示例：
 
 ```text
-Question: 大数据量导出采用哪种方式？
+问题：大数据量导出采用哪种方式？
 
 A. 同步导出
    请求完成后直接下载，适合小数据量。
@@ -104,17 +104,17 @@ C. 自定义
    告诉我你希望采用的方式。
 ```
 
-The question must make the decision boundary obvious enough that the user can choose without needing to inspect implementation details.
+问题必须让用户能够在不查看实现细节的情况下明确理解决策边界。
 
-If a custom option is selected, use the user's response as the decision input and do not reinterpret it into a different product decision without asking again when ambiguity remains.
+如果用户选择自定义选项，应将用户输入作为决策依据；如果仍存在歧义，则再次询问，而不是自行解释成另一个产品决策。
 
-## Record Every Decision
+## 记录每一个决策
 
-After the user answers a clarification question, execute the **exact CLI command supplied by the current `workflow.action.clarification.recordCommand`**.
+用户回答澄清问题后，执行当前 `workflow.action.clarification.recordCommand` 提供的**完整 CLI 命令**。
 
-Only replace explicit user-input placeholders such as `<question-id>`, `<question>`, `<choice>`, and `<user-answer>`. Do not reconstruct workflow IDs or other CLI-generated values.
+只替换明确标记的用户输入占位符，例如 `<question-id>`、`<question>`、`<choice>`、`<user-answer>`。不得重新构造 workflow ID 或其他 CLI 生成的值。
 
-The command records the decision in workflow state. The conceptual result is:
+概念上的结果为：
 
 ```json
 {
@@ -130,51 +130,51 @@ The command records the decision in workflow state. The conceptual result is:
 }
 ```
 
-Persist detailed decision history in:
+详细决策历史持久化到：
 
 `.dev/workflows/<workflow-id>/artifacts/decisions.md`
 
-A decision entry should contain:
+每条决策至少包含：
 
-- question
-- available choices
-- selected choice
-- user's custom answer when applicable
-- resulting requirement decision
+- 问题
+- 可选项
+- 最终选择
+- 用户自定义答案（如有）
+- 最终需求决策
 
-## Continue the Clarification Loop
+## 继续需求澄清循环
 
-After recording a decision, continue analyzing the request. Do not treat one answer as completion of Specify.
+记录决策后继续分析请求，不要把一次回答视为 Specify 已完成。
 
-Ask the next question if another material ambiguity exists.
+如果还存在其他重要歧义，应继续询问。
 
-The loop can contain any number of clarification rounds. Stop only when all material requirements, boundaries, and acceptance criteria are sufficiently determined.
+澄清轮次可以是任意次数。只有当所有重要需求、边界和验收标准都已经确定时才能停止。
 
-## Final Specification Gate
+## 最终规格说明检查
 
-Before generating `specify.md`, perform an internal checklist:
+生成 `specify.md` 前执行检查：
 
-- Goal is explicit.
-- Scope is explicit.
-- Non-goals are explicit.
-- Functional requirements are testable.
-- Material edge cases have a confirmed behavior.
-- Important constraints are confirmed.
-- Acceptance criteria are verifiable.
-- No material open question remains.
-- All user decisions that affected requirements have been recorded.
+- 目标明确。
+- 范围明确。
+- 非目标明确。
+- 功能需求可测试。
+- 重要边界场景行为已确认。
+- 重要约束已确认。
+- 验收标准可验证。
+- 不存在重要未决问题。
+- 所有影响需求的用户决策都已记录。
 
-If a material question remains, **do not generate the final artifact**. Ask the user first.
+如果仍存在重要问题，**不要生成最终产物，先询问用户。**
 
-## Artifact
+## 产物
 
-Write the detailed decision history to:
+将详细决策历史写入：
 
 `.dev/workflows/<workflow-id>/artifacts/decisions.md`
 
-Write the complete final specification to the artifact path provided by `expectedOutput.artifact`.
+将完整规格说明写入 `expectedOutput.artifact` 指定的路径。
 
-Recommended `specify.md` structure:
+推荐 `specify.md` 结构：
 
 ```markdown
 # Specification
@@ -198,49 +198,51 @@ Recommended `specify.md` structure:
 ## Open Questions
 ```
 
-`Open Questions` must be empty (or explicitly state `None`) when Specify reports success.
+Specify 成功时，`Open Questions` 必须为空或明确写为 `None`。
 
-The artifact is the source of detailed requirements. Keep the completion response compact.
+详细需求以产物为准，完成响应保持简洁。
 
-## Completion Result
+## 完成结果
 
-Only after the clarification loop is complete and the final specification has been written, return a concise structured result conceptually equivalent to:
+只有完成澄清循环并写入最终规格说明后，才能返回类似以下的结构化结果：
 
 ```json
 {
   "status": "success",
-  "summary": "Specification completed after resolving all material requirements decisions.",
+  "summary": "所有重要需求决策均已解决，规格说明已完成。",
   "artifact": ".dev/workflows/<workflow-id>/artifacts/specify.md"
 }
 ```
 
-If an essential decision cannot be resolved because the user has not answered, continue clarification rather than returning success. Return `failed` only for an actual execution problem that prevents the skill from completing.
+如果用户尚未回答必要决策，应继续澄清，不得返回成功。只有真正发生阻止 Skill 完成的执行问题时才能返回 `failed`。
 
-## Workflow Approval Is Separate
+## Workflow 审批是独立步骤
 
-Do not confuse Specify's internal clarification with the workflow-level approval gate.
+不要混淆 Specify 内部的需求澄清与 workflow 级别的审批。
 
-The sequence is:
+流程是：
 
 ```text
-Specify clarification
+Specify 澄清
   → AskUserQuestion
-  → record decision
-  → continue clarification
-  → final specify.md
-  → completion command
+  → 记录决策
+  → 继续澄清
+  → 最终 specify.md
+  → 完成命令
   → workflow result
   → workflow next
   → workflow.approval_required
-  → AskUserQuestion: Approve / Revise
+  → AskUserQuestion：Approve / Revise
 ```
 
-The user therefore confirms **individual requirement decisions during Specify**, and separately confirms **the completed Specify artifact before Design begins**.
+因此，用户需要在 Specify 阶段确认**具体需求决策**，并在 Specify 完成后再次确认**整个 Specify 产物**，之后才能进入 Design。
 
-A successful Specify execution never means the next workflow stage may start automatically.
+Specify 成功绝不意味着下一阶段可以自动开始。
 
-## Revision
+## 修订
 
-When `input.feedback` is present, first incorporate the feedback into the clarification context. Re-open any requirement boundary affected by the feedback. If the feedback creates a new material ambiguity, use AskUserQuestion again instead of assuming the intended behavior.
+当存在 `input.feedback` 时，先将反馈纳入澄清上下文，重新检查受影响的需求边界。
 
-Preserve valid existing requirements and decisions that are not affected by the revision.
+如果反馈产生新的重要歧义，必须再次使用 AskUserQuestion，而不是自行假设用户意图。
+
+保留未受修订影响的有效需求和决策。
