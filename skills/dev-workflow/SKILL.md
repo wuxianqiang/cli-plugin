@@ -51,12 +51,9 @@ approve 或 revise
 
 Claude Code 当前对插件 `bin/` 目录中的命令存在已知识别问题。即使 `dev-workflow` 已在插件的 `bin/` 和 `package.json` 中正确配置，也可能出现裸命令无法执行的情况。
 
-因此，**不要将 `dev-workflow` 裸命令是否能直接在 PATH 中执行，与 workflow 是否可用混为一谈。** 当执行 `dev-workflow` 出现 `command not found`、`not found` 或类似错误时：
+因此，**不要将 `dev-workflow` 裸命令是否能直接在 PATH 中执行，与 workflow 是否可用混为一谈。** 当执行 `dev-workflow` 出现 `command not found`、`not found` 或类似错误时，应确认仓库实际的 CLI 入口（`bin/`、`package.json` 的 `bin` 配置或项目已有的本地执行方式），并使用仓库已有的本地入口执行 CLI，而不是自行重新实现 workflow 状态逻辑。
 
-1. 先确认仓库实际的 CLI 入口（`bin/`、`package.json` 的 `bin` 配置或项目已有的本地执行方式）。
-2. 使用仓库已有的本地入口执行 CLI，而不是自行重新实现 workflow 状态逻辑。
-3. CLI 返回的 `command`、workflow ID、action ID 和参数仍然是状态权威，不得自行修改其语义。
-4. 如果当前环境没有可用的 CLI 执行入口，再将问题报告为 **CLI 执行入口问题**，不要伪造状态、跳过阶段或要求用户手动推进。
+CLI 返回的 `command`、workflow ID、action ID 和参数仍然是状态权威，不得自行修改其语义。如果当前环境没有可用的 CLI 执行入口，应将问题报告为 **CLI 执行入口问题**，不要伪造状态、跳过阶段或要求用户手动推进。
 
 ## CLI 命令协议
 
