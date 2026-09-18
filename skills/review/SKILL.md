@@ -1,69 +1,69 @@
 ---
 name: review
-description: Orchestrates parallel code review agents, asks the user which findings to fix or skip, applies selected fixes, and verifies the final result.
+description: 编排并行代码审查代理，询问用户选择修复或跳过问题，应用选中的修复并验证最终结果。
 ---
 
 # Review Skill
 
-## Role
+## 角色
 
-Coordinate the configured review Subagents, aggregate their findings, let the user decide which actionable findings should be fixed, apply the selected fixes, and produce one final verified review result.
+协调配置的 Review Subagent，汇总审查发现，让用户决定哪些可操作问题需要修复，然后应用选中的修复并完成最终验证。
 
-A review is not complete merely because findings have been written to `review.md`. The review stage is complete only after every finding has an explicit user decision (`fix` or `skip`) and all selected fixes have been implemented and verified.
+Review 不能仅因为问题已经写入 `review.md` 就算完成。只有当每个发现都有明确的用户决策（`fix` 或 `skip`），并且所有选中的修复都已经实现和验证后，Review 阶段才算完成。
 
-The CLI declares the review execution strategy. When the action specifies parallel Subagents, dispatch all configured agents independently and aggregate their compact results.
+CLI 决定 Review 的执行策略。当 action 指定并行 Subagent 时，独立派发所有配置的代理，并汇总它们的紧凑结果。
 
-## Input
+## 输入
 
-Use:
+使用：
 
 - `input.request`
 - `input.artifacts`
 - `input.feedback`
 - `expectedOutput.artifact`
-- the action's `execution.agents`
+- action 的 `execution.agents`
 
-Read the implementation artifact and inspect the relevant repository state. Review agents should inspect source code themselves rather than relying on copied snippets.
+读取实现产物并检查相关仓库状态。Review Agent 应自行检查源代码，而不是依赖复制到上下文中的代码片段。
 
 ## Review Agents
 
-The default review group is:
+默认 Review Agent 包括：
 
 - `security-review`
 - `performance-review`
 - `architecture-review`
 - `stability-review`
 
-Do not silently omit a configured required agent.
+不要静默跳过配置中要求执行的代理。
 
-## Dispatch
+## 派发
 
-Run configured review agents in parallel when supported by the execution environment.
+在执行环境支持时，并行运行所有配置的 Review Agent。
 
-Each agent should receive:
+每个 Agent 应获得：
 
-- original request
-- relevant artifact paths
-- implementation result
-- repository context
-- its specific review scope
+- 原始请求
+- 相关产物路径
+- 实现结果
+- 仓库上下文
+- 自己负责的审查范围
 
-Each agent must return a compact structured result and may write a detailed agent-specific artifact.
+每个 Agent 必须返回紧凑的结构化结果，也可以写入详细的 Agent 专属产物。
 
-## Aggregation
+## 汇总
 
-After all required agents finish:
+所有必需 Agent 完成后：
 
-1. Collect their compact results.
-2. Preserve source-agent provenance for every finding.
-3. Deduplicate overlapping findings.
-4. Normalize severity and confidence.
-5. Prioritize actionable issues.
-6. Record unresolved disagreements when they matter.
-7. Give every finding a stable identifier such as `F-001`.
-8. Write the current review findings to `expectedOutput.artifact`.
+1. 收集紧凑结果。
+2. 保留每个发现的来源 Agent。
+3. 去重重叠问题。
+4. 统一严重程度和置信度。
+5. 优先处理可执行问题。
+6. 在重要时记录无法解决的分歧。
+7. 为每个发现分配稳定 ID，例如 `F-001`。
+8. 将当前 Review 发现写入 `expectedOutput.artifact`。
 
-Every finding should include, when applicable:
+每个发现应尽可能包含：
 
 - id
 - severity
@@ -74,85 +74,85 @@ Every finding should include, when applicable:
 - impact
 - recommended fix
 
-## User Decision Gate
+## 用户决策门禁
 
-**Do not treat the first review report as the final result.** After findings are aggregated, inspect which findings have a concrete recommended fix and ask the user what should happen.
+**不要把第一次 Review 报告视为最终结果。** 汇总发现后，检查哪些问题具有明确的修复建议，并询问用户如何处理。
 
-Use `AskUserQuestion` to present the actionable findings. The question must support selective decisions rather than forcing all findings to be fixed or all findings to be skipped.
+使用 `AskUserQuestion` 展示可操作的问题。必须支持用户选择性修复，而不能强制全部修复或全部跳过。
 
-For example:
+例如：
 
 ```text
-Review found 3 actionable findings:
+Review 发现 3 个可处理问题：
 
-F-001 [High] Missing permission check
-Recommended fix: validate the permission before executing the operation.
+F-001 [High] 缺少权限检查
+建议修复：执行操作前增加权限校验。
 
-F-002 [Medium] Repeated API request
-Recommended fix: deduplicate requests with the existing request cache.
+F-002 [Medium] API 重复请求
+建议修复：使用现有请求缓存进行请求去重。
 
-F-003 [Low] Error message loses context
-Recommended fix: preserve the original error code.
+F-003 [Low] 错误信息丢失上下文
+建议修复：保留原始错误码。
 
-Choose which findings to fix. Findings not selected will be recorded as skipped.
+请选择需要修复的问题，未选中的问题将记录为跳过。
 ```
 
-Recommended choices:
+推荐选项：
 
-- `Fix F-001, F-002`
-- `Fix F-001, F-002, F-003`
-- `Skip all`
-- `Custom selection`
+- `修复 F-001、F-002`
+- `修复 F-001、F-002、F-003`
+- `全部跳过`
+- `自定义选择`
 
-If there are many findings, use a multi-select question when the host supports it. The user may select any subset.
+如果发现较多，宿主支持时使用多选问题。用户可以选择任意子集。
 
-A finding that the user does not select is **skipped**, not silently forgotten. Record the user's decision and rationale when provided.
+用户没有选择的发现属于**跳过**，不能静默遗忘。需要记录用户的决定，以及用户提供的原因。
 
-For each decision, record:
+每个决策记录：
 
 ```json
 {
   "findingId": "F-001",
   "decision": "fix | skip",
-  "reason": "<optional user reason>"
+  "reason": "<可选的用户原因>"
 }
 ```
 
-Persist these decisions in the review workflow state through the CLI clarification mechanism. The Review Skill must use the CLI-generated clarification command exposed by the workflow action; it must not invent a different workflow command.
+通过 CLI clarification 机制将这些决策持久化到 Review workflow state。Review Skill 必须使用 workflow action 暴露的 CLI 澄清命令，不能自行发明其他 workflow 命令。
 
-## Applying Selected Fixes
+## 应用选中的修复
 
-For every finding marked `fix`:
+对于每个标记为 `fix` 的发现：
 
-1. Dispatch the implementation capability/subagent with the finding, evidence, location, and recommended fix.
-2. The implementation agent must modify the repository, not merely describe the change.
-3. Run focused verification for the changed code.
-4. Record the implementation result and verification.
+1. 将问题、证据、位置和修复建议派发给实现能力/子代理。
+2. 实现代理必须实际修改仓库，而不是只描述修改方式。
+3. 对修改后的代码执行针对性验证。
+4. 记录实现结果和验证结果。
 
-Do not modify the repository for findings marked `skip`.
+对于标记为 `skip` 的问题，不得修改仓库。
 
-The implementation agent should receive only the relevant finding information and artifact paths needed to perform the fix, keeping the main context small.
+实现代理只应接收执行该问题所需的相关信息和产物路径，以控制主上下文规模。
 
-## Re-review After Fixes
+## 修复后的重新 Review
 
-After selected fixes finish:
+选中的修复完成后：
 
-1. Re-run the relevant review agents against the updated repository.
-2. Verify that each selected finding is actually resolved.
-3. Check that the fix did not introduce a new regression in the affected area.
-4. If a selected finding remains unresolved, present it to the user again with its updated evidence and recommended next action.
-5. If the user chooses to skip it on the second decision, record it as skipped.
-6. If new actionable findings are discovered, assign new finding IDs and ask the user whether to fix or skip them.
+1. 针对更新后的仓库重新运行相关 Review Agent。
+2. 验证每个选中的问题是否真正解决。
+3. 检查修复是否在受影响区域引入新的回归。
+4. 如果选中的问题仍未解决，再次向用户展示更新后的证据和建议处理方式。
+5. 如果用户第二次选择跳过，则记录为 `skip`。
+6. 如果发现新的可操作问题，为其分配新的 Finding ID，并询问用户修复还是跳过。
 
-This can repeat until there are no unresolved user decisions and no selected fixes awaiting verification.
+这个过程可以重复，直到没有未决用户决策，也没有等待验证的选中修复。
 
-Do not automatically fix newly discovered issues without user selection.
+不得在没有用户选择的情况下自动修复新发现的问题。
 
-## Final Review Artifact
+## 最终 Review 产物
 
-Only after the decision/fix/review loop is complete, write the final unified review artifact to `expectedOutput.artifact`.
+只有完成决策 → 修复 → Review 循环后，才能将最终统一 Review 产物写入 `expectedOutput.artifact`。
 
-Recommended artifact structure:
+推荐结构：
 
 ```markdown
 # Review Report
@@ -187,22 +187,22 @@ Recommended artifact structure:
 ## Recommended Actions
 ```
 
-The final artifact must distinguish:
+最终产物必须区分：
 
-- fixed and verified findings
-- explicitly skipped findings
-- unresolved findings, if any
+- 已修复并验证的问题
+- 用户明确跳过的问题
+- 尚未解决的问题（如有）
 
-There must be no finding that silently disappears between the initial review and the final report.
+初始 Review 到最终报告之间，不能有任何问题静默消失。
 
-## Completion Result
+## 完成结果
 
-Return only a compact summary to the Orchestrator:
+只向 Orchestrator 返回紧凑摘要：
 
 ```json
 {
   "status": "success",
-  "summary": "Review completed: 2 findings fixed and verified, 1 finding skipped by the user.",
+  "summary": "Review 完成：2 个问题已修复并验证，1 个问题由用户选择跳过。",
   "findings": [
     {
       "id": "F-001",
@@ -225,10 +225,10 @@ Return only a compact summary to the Orchestrator:
 }
 ```
 
-Do not return complete agent reports or detailed reasoning in the main context.
+不要向主上下文返回完整 Agent 报告或详细推理。
 
-## Failure Rules
+## 失败规则
 
-If a required review agent fails, the review is normally `failed`. Do not present a partial review as complete unless the configured workflow explicitly permits partial coverage.
+如果必需的 Review Agent 失败，通常整个 Review 应返回 `failed`。除非 workflow 明确允许部分覆盖，否则不能把部分 Review 当作完成。
 
-If a selected fix cannot be safely implemented or verified, report the failure and ask the user whether to retry the fix or skip that finding. Do not mark it as fixed without verification.
+如果选中的修复无法安全实现或验证，应报告失败，并询问用户重试修复还是跳过该问题。未经过验证不得标记为已修复。
