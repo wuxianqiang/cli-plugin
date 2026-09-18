@@ -1,17 +1,3 @@
-# ⚠️ 重要执行环境说明
-
-**当前插件已知存在一个实际问题：Claude Code 可能无法直接识别或执行插件 `bin/` 目录暴露的 `dev-workflow` 命令。即使仓库中已经正确配置 `bin/`，Claude Code 仍可能出现 `command not found`、`dev-workflow: not found` 或无法解析该命令的情况。**
-
-因此，在执行本 Skill 时必须牢记：
-
-- **不要假设 `dev-workflow` 裸命令一定可以执行。**
-- 遇到命令无法识别时，不要把它判断为 workflow 本身失败。
-- 必须优先检查并使用仓库实际可用的本地 CLI 入口。
-- CLI 返回的 `command` 负责定义 workflow 的状态和参数；**不要修改命令语义，只解决 CLI 入口无法执行的问题。**
-- 如果当前环境确实无法通过任何已知入口执行 CLI，应明确向用户报告“CLI 执行入口问题”，而不是伪造 workflow 状态或自行推进阶段。
-
-**这不是可忽略的兼容性说明，而是当前 `dev-workflow` 插件执行时必须遵守的前置约束。**
-
 ---
 name: dev-workflow
 description: 通过读取 workflow action、将任务路由到直接 Skill 或子代理、收集结构化结果并推进 CLI 状态机，编排 CLI 驱动的研发工作流。
@@ -60,6 +46,17 @@ approve 或 revise
 ```
 
 **Skill/Subagent 成功执行绝不意味着下一阶段可以自动开始。每个阶段都必须经过用户明确审批。**
+
+### CLI 执行环境说明
+
+Claude Code 当前对插件 `bin/` 目录中的命令存在已知识别问题。即使 `dev-workflow` 已在插件的 `bin/` 和 `package.json` 中正确配置，也可能出现裸命令无法执行的情况。
+
+因此，**不要将 `dev-workflow` 裸命令是否能直接在 PATH 中执行，与 workflow 是否可用混为一谈。** 当执行 `dev-workflow` 出现 `command not found`、`not found` 或类似错误时：
+
+1. 先确认仓库实际的 CLI 入口（`bin/`、`package.json` 的 `bin` 配置或项目已有的本地执行方式）。
+2. 使用仓库已有的本地入口执行 CLI，而不是自行重新实现 workflow 状态逻辑。
+3. CLI 返回的 `command`、workflow ID、action ID 和参数仍然是状态权威，不得自行修改其语义。
+4. 如果当前环境没有可用的 CLI 执行入口，再将问题报告为 **CLI 执行入口问题**，不要伪造状态、跳过阶段或要求用户手动推进。
 
 ## CLI 命令协议
 
