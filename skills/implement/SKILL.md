@@ -1,59 +1,59 @@
 ---
 name: implement
-description: Executes the approved implementation task plan through the configured implementation subagent and records implementation results.
+description: 通过配置的实现子代理执行已批准的任务计划，并记录实现结果。
 ---
 
 # Implement Skill
 
-## Role
+## 角色
 
-Coordinate execution of the approved task plan. The actual code changes should be performed by the configured implementation Subagent.
+协调已批准任务计划的执行。实际代码修改应由配置的实现 Subagent 完成。
 
-This Skill is an execution boundary: it prepares focused context for the Subagent, validates the result, and records a concise completion summary.
+这是一个**执行边界**：你负责为 Subagent 准备聚焦后的上下文、验证结果并记录简洁的完成摘要。
 
-## Input
+## 输入
 
-Use:
+使用：
 
 - `input.request`
 - `input.artifacts`
 - `input.feedback`
 - `expectedOutput.artifact`
-- the action's `execution.agent` configuration
+- action 的 `execution.agent` 配置
 
-Read the specification, design, and task artifacts as needed. Do not copy their full contents into the Subagent prompt when file paths are sufficient.
+根据需要读取规格说明、设计和任务产物。能够使用文件路径时，不要将完整内容复制到 Subagent prompt。
 
-## Subagent Dispatch
+## 子代理派发
 
-Dispatch the configured implementation agent from `execution.agent`.
+派发 `execution.agent` 中配置的实现代理。
 
-Provide:
+提供：
 
-- original request
-- relevant artifact paths
-- implementation task plan
-- current feedback
-- expected implementation outcome
+- 原始请求
+- 相关产物路径
+- 实现任务计划
+- 当前反馈
+- 预期实现结果
 
-Tell the Subagent to inspect the repository itself, implement the tasks, run appropriate tests, and report verification results.
+要求 Subagent 自行检查代码库、实现任务、运行适当测试，并报告验证结果。
 
-The Subagent owns source-code modifications. Do not duplicate its implementation work in the Orchestrator context.
+Subagent 负责源代码修改。不要在 Orchestrator 上下文中重复实现工作。
 
-## Required Implementation Behavior
+## 必须满足的实现行为
 
-The implementation agent should:
+实现代理应：
 
-1. Inspect the current repository state.
-2. Read the specification, design, and tasks artifacts.
-3. Implement the tasks in dependency order.
-4. Avoid unrelated changes.
-5. Run relevant tests, type checks, linting, or build checks when available.
-6. Record important implementation notes in the implementation artifact.
-7. Return a compact result containing status, summary, changed areas, and verification.
+1. 检查当前仓库状态。
+2. 阅读规格说明、设计和任务产物。
+3. 按依赖顺序实现任务。
+4. 避免无关修改。
+5. 在可用时运行相关测试、类型检查、Lint 或构建检查。
+6. 将重要实现说明记录到实现产物。
+7. 返回包含状态、摘要、修改范围和验证结果的紧凑结构化结果。
 
-## Artifact
+## 产物
 
-Write or finalize `expectedOutput.artifact` with a concise implementation report:
+使用 `expectedOutput.artifact` 写入或完善简洁的实现报告：
 
 ```markdown
 # Implementation Report
@@ -67,23 +67,25 @@ Write or finalize `expectedOutput.artifact` with a concise implementation report
 ## Remaining Issues
 ```
 
-The artifact should not contain a full transcript or chain of thought.
+产物不应包含完整对话记录或思维过程。
 
-## Completion Result
+## 完成结果
 
-Return a compact result conceptually equivalent to:
+返回类似以下结果：
 
 ```json
 {
   "status": "success",
-  "summary": "Implementation completed and verification passed.",
+  "summary": "实现已完成并通过验证。",
   "decisions": [],
   "artifact": ".dev/workflows/<workflow-id>/artifacts/implement.md"
 }
 ```
 
-Use `failed` if implementation is incomplete or required verification fails.
+如果实现不完整或必要验证失败，使用 `failed`。
 
-## Failure Rules
+## 失败规则
 
-Do not report success merely because files were changed. A successful implementation requires the requested work to be complete enough for review and relevant verification to have been attempted.
+不能因为文件发生了修改就报告成功。
+
+只有当需求已经足够完整地实现，并且已经尝试执行相关验证时，才能报告实现成功。
