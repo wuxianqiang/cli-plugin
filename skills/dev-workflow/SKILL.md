@@ -1,112 +1,112 @@
 ---
 name: dev-workflow
-description: Orchestrates the CLI-driven development workflow by reading workflow actions, routing them to direct Skills or subagents, collecting structured results, and advancing the CLI state machine.
+description: 通过读取 workflow action、将任务路由到直接 Skill 或子代理、收集结构化结果并推进 CLI 状态机，编排 CLI 驱动的研发工作流。
 ---
 
 # Dev Workflow Orchestrator
 
-## Role
+## 角色
 
-You are the orchestration layer between the `dev-workflow` CLI and the LLM execution environment.
+你是 `dev-workflow` CLI 与 LLM 执行环境之间的编排层。
 
-The CLI is the workflow runtime and state authority. It owns stage state, approval, retry, and progression. **Do not implement workflow state transitions yourself.**
+CLI 是 workflow 的运行时和状态权威，负责阶段状态、审批、重试和流程推进。**不要自行实现 workflow 状态转换。**
 
-## Core Loop
+## 核心循环
 
-Follow this loop exactly:
+严格遵循：
 
 ```text
 next
  ↓
 workflow.action
  ↓
-execute Skill / Subagent
+执行 Skill / Subagent
  ↓
-write artifact
+写入产物
  ↓
-[interactive stage?]
- ├─ Specify/Design → AskUserQuestion → clarify → next → same Action
- └─ Review → findings → AskUserQuestion → fix/skip → apply selected fixes → re-review
+[交互阶段？]
+ ├─ Specify / Design → AskUserQuestion → clarify → next → 同一个 Action
+ └─ Review → findings → AskUserQuestion → fix / skip → 应用修复 → re-review
  ↓
-final artifact
+最终产物
  ↓
-execute CLI-provided completion.command
+执行 CLI 提供的 completion.command
  ↓
-execute CLI-provided next.command
+执行 CLI 提供的 next.command
  ↓
 workflow.approval_required
  ↓
-AskUserQuestion  ← MANDATORY PAUSE
+AskUserQuestion ← 必须暂停
  ↓
-approve OR revise
+approve 或 revise
  ↓
-execute CLI-provided next command
+执行 CLI 提供的 next command
  ↓
-next workflow.action
+进入下一个 workflow.action
 ```
 
-**A successful Skill/Subagent execution never means the next stage may start automatically. Every stage requires explicit user approval.**
+**Skill/Subagent 成功执行绝不意味着下一阶段可以自动开始。每个阶段都必须经过用户明确审批。**
 
-## CLI Command Protocol
+## CLI 命令协议
 
-The CLI generates complete executable commands with workflow-generated values already resolved.
+CLI 会生成完整的可执行命令，并提前解析 workflow 所需的值。
 
-The Orchestrator must **not** construct, concatenate, substitute, or infer workflow CLI arguments.
+Orchestrator **不得自行构造、拼接、替换或推断 workflow CLI 参数**。
 
-When a CLI response contains a `command` field, execute that command exactly as returned.
+CLI 响应包含 `command` 字段时，必须原样执行。
 
-The only exception is an explicitly marked user-input slot, such as a review clarification answer or revision feedback. Replace only that slot with the user's actual input.
+唯一例外是明确标记的用户输入占位符，例如 Review 澄清答案或修订反馈。只能替换该占位符。
 
-## Starting a Workflow
+## 启动 Workflow
 
-The initial workflow ID comes from the caller or workflow creation result. The initial lookup may therefore be:
+初始 workflow ID 来自调用方或 workflow 创建结果，因此第一次查询可以是：
 
 ```bash
 dev-workflow next --id <initial-workflow-id> --json
 ```
 
-After that, prefer commands returned by the CLI. Never infer the next stage.
+之后优先使用 CLI 返回的命令。永远不要自行推断下一阶段。
 
-If the CLI is not globally installed, use the repository executable directly.
+如果 CLI 没有全局安装，直接使用仓库中的可执行文件。
 
-## `workflow.action`
+## workflow.action
 
-Read:
+读取：
 
 - `stage`
 - `skill.name`
 - `execution.mode`
 - `execution.strategy`
-- `execution.agent` or `execution.agents`
+- `execution.agent` 或 `execution.agents`
 - `input`
 - `expectedOutput`
 - `clarification`
 - `completion.command`
 - `completion.failureCommand`
 
-These fields tell you **what work to execute**. The CLI command fields tell you **how to report the result**.
+这些字段告诉你**执行什么工作**；CLI command 字段告诉你**如何报告结果**。
 
 ### Direct
 
-For `execution.mode=direct` and `strategy=single`, execute the referenced Skill in the current LLM context.
+当 `execution.mode=direct` 且 `strategy=single` 时，在当前 LLM 上下文中执行对应 Skill。
 
-### Single Subagent
+### 单个 Subagent
 
-For `execution.mode=subagent` and `strategy=single`, dispatch the configured agent.
+当 `execution.mode=subagent` 且 `strategy=single` 时，派发配置的 Agent。
 
-The agent should read relevant artifacts/files itself, perform the work, write detailed output to the artifact, and return only a compact structured result.
+Agent 应自行读取相关产物和文件、执行工作、将详细结果写入产物，并只返回紧凑结构化结果。
 
-### Parallel Subagents
+### 并行 Subagent
 
-For `execution.mode=subagent` and `strategy=parallel`, dispatch every configured agent independently and in parallel when supported.
+当 `execution.mode=subagent` 且 `strategy=parallel` 时，在环境支持的情况下独立并行派发所有配置的 Agent。
 
-Each agent should return a compact result. Aggregate the results into the stage artifact while preserving finding provenance.
+每个 Agent 返回紧凑结果。汇总时保留 Finding 的来源信息。
 
-## Interactive Stage Protocol
+## 交互阶段协议
 
-Some stages can pause **inside the same running Action** because the work cannot be completed without a user decision.
+某些阶段由于无法在没有用户决策的情况下完成，可以在**同一个运行中的 Action 内暂停**。
 
-When the action exposes:
+当 action 暴露：
 
 ```json
 {
@@ -117,190 +117,192 @@ When the action exposes:
 }
 ```
 
-and the Skill discovers an unresolved decision:
+且 Skill 发现未解决的决策时：
 
-1. Call `AskUserQuestion`.
-2. Present concrete options whenever possible.
-3. Include a `Custom` option when the user may have another valid answer.
-4. Wait for the user's answer.
-5. Execute the exact CLI-generated `recordCommand`, replacing only its explicit user-input placeholders.
-6. Execute the returned `next.command`.
-7. The CLI will return the same `workflow.action`/Action ID for an interactive running stage.
-8. Continue the same Skill with the updated `input.clarification.decisions`.
+1. 调用 `AskUserQuestion`。
+2. 尽可能提供具体选项。
+3. 用户可能有其他有效答案时提供 `Custom`。
+4. 等待用户回答。
+5. 执行 CLI 生成的完整 `recordCommand`，只替换明确的用户输入占位符。
+6. 执行返回的 `next.command`。
+7. CLI 应返回同一个 `workflow.action` / Action ID，表示交互阶段仍在运行。
+8. 使用更新后的 `input.clarification.decisions` 继续同一个 Skill。
 
-Do not call `workflow.result` while the interactive stage still has unresolved questions.
+交互阶段仍存在未解决问题时，不得调用 `workflow.result`。
 
 ### Specify / Design
 
-Use this protocol for requirement or technical-design decisions that cannot be safely determined from project facts.
+用于处理无法仅根据项目事实安全确定的需求或技术设计决策。
 
 ### Review
 
-Review has a stronger decision loop:
+Review 具有更强的决策循环：
 
 ```text
-parallel review agents
-        ↓
-aggregate findings
-        ↓
+并行 Review Agent
+       ↓
+汇总 findings
+       ↓
 AskUserQuestion
-        ↓
-select findings to FIX
-        ↓
-unselected findings = SKIP
-        ↓
-implement selected fixes
-        ↓
-focused verification
-        ↓
-re-run relevant review agents
-        ↓
-new/unresolved findings?
-   ├─ yes → AskUserQuestion again
-   └─ no
-        ↓
-final review.md
-        ↓
+       ↓
+选择需要 FIX 的问题
+       ↓
+未选择的问题 = SKIP
+       ↓
+实现选中的修复
+       ↓
+针对性验证
+       ↓
+重新运行相关 Review Agent
+       ↓
+存在新的 / 未解决问题？
+  ├─ 是 → 再次 AskUserQuestion
+  └─ 否
+       ↓
+最终 review.md
+       ↓
 workflow.result
 ```
 
-For Review:
+Review 要求：
 
-- Every finding must receive an explicit `fix` or `skip` decision.
-- Do not silently ignore findings.
-- Do not automatically fix every finding.
-- For selected findings, use the implementation capability/subagent to actually modify the repository.
-- Verify selected fixes before marking them fixed.
-- Re-run relevant review agents after fixes.
-- Newly discovered findings also require an explicit user decision.
-- Only after all decisions and selected fixes are verified may Review return its final successful result.
+- 每个 Finding 都必须明确决定 `fix` 或 `skip`。
+- 不得静默忽略问题。
+- 不得自动修复所有问题。
+- 对选中的问题，使用实现能力/子代理实际修改仓库。
+- 标记为已修复前必须完成验证。
+- 修复后重新运行相关 Review Agent。
+- 新发现的问题同样必须经过用户明确决策。
+- 只有所有决策完成且选中的修复均已验证后，Review 才能返回成功。
 
-The Review Skill owns the content of the review decision and should call `AskUserQuestion` with finding IDs, severity, evidence, and recommended fixes. The Orchestrator owns execution of the CLI clarification command and workflow state progression.
+Review Skill 负责 Review 决策内容，并应使用 Finding ID、严重程度、证据和修复建议调用 `AskUserQuestion`。Orchestrator 负责执行 CLI 澄清命令和推进 workflow 状态。
 
-## Skill Router
+## Skill 路由
 
-| Stage | Skill | Execution |
+| 阶段 | Skill | 执行方式 |
 |---|---|---|
 | `specify` | `specify` | direct |
 | `design` | `design` | direct |
 | `tasks` | `tasks` | direct |
-| `implement` | `implement` | configured subagent |
-| `review` | `review` | configured parallel subagents |
+| `implement` | `implement` | 配置的 subagent |
+| `review` | `review` | 配置的并行 subagent |
 
-The CLI's `skill` and `execution` fields take precedence. Do not hard-code stage progression.
+CLI 的 `skill` 和 `execution` 字段优先，不要硬编码阶段推进。
 
-## Context Minimization
+## 上下文最小化
 
-Subagents exist partly to isolate context.
+Subagent 的部分作用就是隔离上下文。
 
-- Pass artifact paths instead of large copied content.
-- Let Subagents inspect the repository and artifacts themselves.
-- Store detailed analysis in artifacts.
-- Return only summaries, findings, decisions, verification, and artifact paths.
-- Aggregate parallel results once.
-- Read detailed artifacts only when later work requires them.
+- 传递产物路径，而不是复制大量内容。
+- 让 Subagent 自行检查仓库和产物。
+- 将详细分析保存到产物。
+- 只返回摘要、发现、决策、验证结果和产物路径。
+- 并行结果只汇总一次。
+- 只有后续工作确实需要时才读取详细产物。
 
-## Stage Completion Protocol
+## 阶段完成协议
 
-After a Skill or Subagent finishes its **complete** work:
+Skill 或 Subagent 完成**全部工作**后：
 
-1. Verify the expected artifact actually exists.
-2. Execute the exact `workflow.action.completion.command` returned by the CLI on success, or `completion.failureCommand` on failure.
-3. Execute the exact continuation command returned by the CLI.
-4. Inspect the resulting workflow type.
+1. 验证预期产物确实存在。
+2. 成功时执行 CLI 返回的 `workflow.action.completion.command`；失败时执行 `completion.failureCommand`。
+3. 执行 CLI 返回的精确 continuation command。
+4. 检查最终 workflow 类型。
 
-For interactive stages, do **not** report success until their clarification/fix/review loop is complete.
+对于交互阶段，在澄清/修复/Review 循环完成前，**不得**报告成功。
 
-Do not manually call `approve` after `result`.
+不要在 `result` 后手动调用 `approve`。
 
-## Mandatory approval gate
+## 强制审批门禁
 
-When the CLI returns `workflow.approval_required`, this is a mandatory human-in-the-loop pause.
+CLI 返回 `workflow.approval_required` 时，这是强制的人机协作暂停点。
 
-Immediately use `AskUserQuestion`. Present:
+立即使用 `AskUserQuestion`，展示：
 
-- completed stage
-- artifact path
-- concise result summary
+- 已完成的阶段
+- 产物路径
+- 简洁结果摘要
 - `Approve and continue`
 - `Revise`
 
-Wait for the answer.
+等待用户回答。
 
-### User chooses Approve
+### 用户选择 Approve
 
-1. Execute the exact `actions.approve.command` returned by the CLI.
-2. Inspect the CLI response.
-3. Execute the CLI-provided `next` command.
-4. Continue only when the CLI returns the next `workflow.action`.
+1. 执行 CLI 返回的 `actions.approve.command`。
+2. 检查 CLI 响应。
+3. 执行 CLI 提供的 `next` 命令。
+4. 只有 CLI 返回下一个 `workflow.action` 后才能继续。
 
-### User chooses Revise
+### 用户选择 Revise
 
-1. Collect revision feedback.
-2. Execute the CLI-provided `actions.revise.command`, replacing only its explicit user-feedback slot.
-3. Execute the returned `next` command.
-4. Re-run the current stage.
+1. 收集修订反馈。
+2. 执行 CLI 返回的 `actions.revise.command`，只替换明确的用户反馈占位符。
+3. 执行返回的 `next` 命令。
+4. 重新运行当前阶段。
 
-**Never auto-approve. Never ask for approval and then continue without waiting for the answer.**
+**绝不自动批准。绝不在等待用户回答时继续执行。**
 
-## `workflow.result.accepted`
+## workflow.result.accepted
 
-Execute the exact `next.command` returned by the CLI. Do not assume what the next state is.
+执行 CLI 返回的精确 `next.command`。不要假设下一状态。
 
-## `workflow.retry_required`
+## workflow.retry_required
 
-A failed stage is waiting for retry. Do not silently retry indefinitely. If retry is appropriate and authorized, execute the exact CLI-provided retry command and then follow the returned continuation command.
+失败阶段正在等待重试。不要无限静默重试。
 
-## `workflow.completed`
+如果重试是合适且被允许的，执行 CLI 提供的精确 retry command，然后继续执行返回的 continuation command。
 
-Stop. Do not call `next` again. Provide a concise summary based on completed artifacts.
+## workflow.completed
 
-## `workflow.state`
+停止。不要再次调用 `next`。根据已完成的产物提供简洁摘要。
 
-Treat it as state synchronization. Do not invent transitions. If safe, execute the CLI-provided continuation command.
+## workflow.state
 
-## Subagent Result Contract
+将其视为状态同步结果。不要自行发明状态转换。如果安全，可以执行 CLI 提供的 continuation command。
 
-Return compact results such as:
+## Subagent 结果契约
+
+返回类似以下紧凑结果：
 
 ```json
 {
   "agent": "security-review",
   "status": "success | failed",
-  "summary": "<short summary>",
+  "summary": "<简短摘要>",
   "findings": [],
   "decisions": [],
-  "artifact": "<optional artifact path>"
+  "artifact": "<可选产物路径>"
 }
 ```
 
-Never dump full Subagent reasoning into the Orchestrator context.
+不要将完整 Subagent 推理输出到 Orchestrator 上下文。
 
-## Error Handling
+## 错误处理
 
-- Missing or malformed `workflow.action`: stop and report it.
-- Missing required CLI command: stop; do not reconstruct it.
-- Unknown execution mode or strategy: stop; do not guess.
-- Failed required Subagent: normally mark the stage failed.
-- Missing required parallel agent: do not claim review completion.
-- Never fabricate artifacts or successful results.
+- `workflow.action` 缺失或格式错误：停止并报告。
+- 缺少必需 CLI 命令：停止，不要自行重建。
+- execution mode 或 strategy 未知：停止，不要猜测。
+- 必需 Subagent 失败：通常将阶段标记为失败。
+- 缺少必需的并行 Agent：不得声称 Review 已完成。
+- 不得伪造产物或成功结果。
 
-## Forbidden Behavior
+## 禁止行为
 
-The Orchestrator must not:
+Orchestrator 不得：
 
-- construct workflow CLI commands itself
-- infer or mutate workflow IDs, action IDs, or artifact paths in CLI commands
-- infer stage progression
-- mutate `.dev/workflows/<id>/state.json` directly
-- automatically approve a stage
-- skip AskUserQuestion at an approval or review-decision gate
-- continue while waiting for user input
-- hide Subagent failures
-- dump full Subagent reasoning into the main context
-- treat an artifact path as proof that the artifact exists
-- continue after `workflow.completed`
+- 自行构造 workflow CLI 命令
+- 在 CLI 命令中推断或修改 workflow ID、action ID 或产物路径
+- 自行推断阶段推进
+- 直接修改 `.dev/workflows/<id>/state.json`
+- 自动批准阶段
+- 在审批或 Review 决策门禁处跳过 AskUserQuestion
+- 在等待用户输入时继续
+- 隐藏 Subagent 失败
+- 将完整 Subagent 推理输出到主上下文
+- 将产物路径本身视为产物存在的证明
+- 在 `workflow.completed` 后继续执行
 
-## Termination Rule
+## 终止规则
 
-Terminate only when the CLI returns `workflow.completed`, or when execution cannot safely continue and the failure is reported to the user.
+只有 CLI 返回 `workflow.completed`，或者已经无法安全继续并向用户报告失败时，才终止流程。
