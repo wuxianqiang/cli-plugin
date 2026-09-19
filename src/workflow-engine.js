@@ -9,13 +9,15 @@ class WorkflowEngine {
       case 'init': return this.init(args);
       case 'next': return this.next(args);
       case 'result': return this.result(args);
+      case 'publish': return this.publish(args);
+      case 'comment-review': return this.commentReview(args);
       case 'clarify': return this.clarify(args);
       case 'status': return this.status(args);
       case 'approve': return this.change(args, 'approve');
       case 'revise': return this.change(args, 'revise', { feedback: args.feedback });
       case 'retry': return this.change(args, 'retry');
       case 'resume': return this.resume(args);
-      default: return { type: 'workflow.help', commands: ['init', 'next', 'result', 'clarify', 'status', 'approve', 'revise', 'retry', 'resume'] };
+      default: return { type: 'workflow.help', commands: ['init', 'next', 'result', 'publish', 'comment-review', 'clarify', 'status', 'approve', 'revise', 'retry', 'resume'] };
     }
   }
   id(args) { return args.id || args.workflow || args.name; }
@@ -47,6 +49,11 @@ class WorkflowEngine {
         request: state.request,
         artifacts: state.artifacts,
         feedback: current.feedback,
+        review: current.reviewSource ? {
+          mode: 'feishu_comments',
+          document: current.reviewSource,
+          instruction: '先读取该版本飞书文档的评论，理解并应用用户明确提出的修改意见；不要修改未被评论要求变更的内容。'
+        } : null,
         clarification: state.clarification
       },
       clarification: clarificationEnabled ? {
@@ -71,13 +78,27 @@ class WorkflowEngine {
     const stage = state.currentStage;
     const current = state.stages[stage];
 
+    if (current.status === 'publishing') {
+      return {
+        type: 'workflow.publish_required',
+        workflowId: state.workflowId,
+        stage,
+        artifact: current.artifact,
+        version: (current.publication?.currentVersion || 0) + 1,
+        instruction: '将当前 Markdown artifact 创建为新的飞书文档。不要覆盖任何历史文档。创建成功后记录 document_id 和 url。',
+        publishCommand: `dev-workflow publish --id ${state.workflowId} --document-id "<document-id>" --url "<document-url>"`
+      };
+    }
+
     if (current.status === 'waiting_approval') {
       return {
         type: 'workflow.approval_required', workflowId: state.workflowId, stage, status: current.status,
         artifact: current.artifact,
+        publication: current.publication?.versions.at(-1) || null,
         actions: {
           approve: { command: `dev-workflow approve --id ${state.workflowId}` },
-          revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "<user-feedback>"` }
+          revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "<user-feedback>"` },
+          commentReview: { command: `dev-workflow comment-review --id ${state.workflowId}` }
         }
       };
     }
@@ -138,6 +159,35 @@ class WorkflowEngine {
       next: { command: `dev-workflow next --id ${state.workflowId}` }
     };
   }
+  publish(args) {
+    const state = this.load(args);
+    if (!args['document-id'] || !args.url) throw Object.assign(new Error('publish requires --document-id and --url'), { code: 'INVALID_ARGUMENTS' });
+    transition(state, 'publish', { documentId: args['document-id'], url: args.url });
+    this.store.writeState(state);
+    const publication = state.stages[state.currentStage].publication.versions.at(-1);
+    this.store.appendHistory({ type: 'workflow.published', workflowId: state.workflowId, stage: state.currentStage, publication });
+    return {
+      type: 'workflow.published',
+      workflowId: state.workflowId,
+      stage: state.currentStage,
+      artifact: state.stages[state.currentStage].artifact,
+      publication,
+      next: { command: `dev-workflow next --id ${state.workflowId}` }
+    };
+  }
+  commentReview(args) {
+    const state = this.load(args);
+    transition(state, 'comment_review');
+    this.store.writeState(state);
+    this.store.appendHistory({ type: 'workflow.comment_review_requested', workflowId: state.workflowId, stage: state.currentStage, publication: state.stages[state.currentStage].reviewSource });
+    return {
+      type: 'workflow.comment_review_requested',
+      workflowId: state.workflowId,
+      stage: state.currentStage,
+      publication: state.stages[state.currentStage].reviewSource,
+      next: { command: `dev-workflow next --id ${state.workflowId}` }
+    };
+  }
   status(args) { const state = this.load(args); return { type: 'workflow.status', ...state }; }
   change(args, event, payload = {}) {
     const state = this.load(args);
@@ -165,7 +215,8 @@ class WorkflowEngine {
         ? `\n\nClarification: enabled\nPurpose: ${result.clarification.purpose}\nRecord decision: ${result.clarification.recordCommand}` : '';
       return `[NEXT ACTION]\n\nStage: ${result.stage}\nAction: execute ${result.skill.name} skill\nExecution: ${execution}\nInput: ${JSON.stringify(result.input)}\nOutput: ${result.expectedOutput.artifact}${clarification}\n\nSuccess: ${result.completion.command}\nFailure: ${result.completion.failureCommand}`;
     }
-    if (result.type === 'workflow.approval_required') return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\n\nApprove: ${result.actions.approve.command}\nRevise: ${result.actions.revise.command}`;
+    if (result.type === 'workflow.publish_required') return `[PUBLISH REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\nVersion: ${result.version}\n\nCreate a NEW Feishu document from the artifact. Do not overwrite previous documents.\nAfter creation: ${result.publishCommand}`;
+    if (result.type === 'workflow.approval_required') return `[APPROVAL REQUIRED]\n\nStage: ${result.stage}\nArtifact: ${result.artifact || '(none)'}\nFeishu: ${result.publication?.url || '(not published)'}\n\nContinue: ${result.actions.approve.command}\nModify directly: ${result.actions.revise.command}\nPull Feishu comments and revise: ${result.actions.commentReview.command}`;
     if (result.type === 'workflow.retry_required') return `[RETRY REQUIRED]\n\nStage: ${result.stage}\n\nRetry: ${result.actions.retry.command}`;
     if (result.type === 'workflow.status') return `Workflow: ${result.workflowId}\nStatus: ${result.status}\nCurrent stage: ${result.currentStage}\n` + STAGES.map(s => `  ${s.padEnd(10)} ${result.stages[s].status}`).join('\n');
     return JSON.stringify(result, null, 2);
