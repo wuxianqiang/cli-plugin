@@ -33,12 +33,12 @@ function getExecutionConfig(stage) {
   return JSON.parse(JSON.stringify(config));
 }
 
-function initialState(workflowId, request) {
+function initialState(workflowId, request, branch = workflowId) {
   const stages = Object.fromEntries(STAGES.map((stage, index) => [stage, {
     status: index === 0 ? 'ready' : 'pending', attempt: 0, artifact: null, feedback: null, publication: { currentVersion: 0, versions: [] }
   }]));
   return {
-    version: '1.0', workflowId, request, status: 'running', currentStage: 'specify',
+    version: '1.0', workflowId, branch, request, status: 'running', currentStage: 'specify',
     currentAction: null,
     clarification: {
       status: 'not_started',
