@@ -44,7 +44,7 @@ The protocol is intentionally loop-based: **`next` gets an action, the LLM execu
 ## Commands
 
 ```bash
-dev-workflow init --request "<request>"
+dev-workflow init --project-dir "${CLAUDE_PROJECT_DIR}" --request "<request>"
 dev-workflow next --id add-modal --json
 
 dev-workflow clarify \
@@ -171,12 +171,12 @@ Node.js >= 20. No runtime dependencies.
 
 ```bash
 npm test
-node bin/dev-workflow.js init --name demo --request "Add a Modal"
+node bin/dev-workflow.js init --project-dir /path/to/project --request "Add a Modal"
 ```
 
 
 ### Workflow ID
 
-Workflow ID is now the current git branch name. `dev-workflow init` no longer accepts or requires a workflow name. For example, on branch `feature/add-modal`, the workflow ID is `feature/add-modal`. The CLI URL-safe encodes the branch name only when using it as a local filesystem directory, while the original branch name remains the persisted `workflowId`.
+Workflow ID is the **current project git branch name**. `dev-workflow init` no longer accepts or requires a workflow name. The project root must be passed explicitly with `--project-dir` (the plugin Skill uses `${CLAUDE_PROJECT_DIR}`), so the branch is always resolved from the user's project rather than the plugin installation directory. For example, on project branch `feature/add-modal`, the workflow ID is `feature/add-modal`. The CLI URL-safe encodes the branch name only when using it as a local filesystem directory, while the original branch name remains the persisted `workflowId`.
 
 Detached HEAD is not supported because a workflow must be associated with a stable branch.
