@@ -7,7 +7,7 @@ class WorkflowStore {
     this.root = projectRoot;
     this.base = path.join(projectRoot, '.dev', 'workflows');
   }
-  dir(id) { return path.join(this.base, id); }
+  dir(id) { return path.join(this.base, encodeURIComponent(id)); }
   statePath(id) { return path.join(this.dir(id), 'state.json'); }
   historyPath(id) { return path.join(this.dir(id), 'history.jsonl'); }
   artifactDir(id) { return path.join(this.dir(id), 'artifacts'); }
