@@ -7,7 +7,8 @@ const { parseArgs } = require('../src/args');
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const store = new WorkflowStore(process.cwd());
+  const projectRoot = args['project-dir'] || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const store = new WorkflowStore(projectRoot);
   const engine = new WorkflowEngine(store);
   const result = await engine.run(args);
   const output = args.json ? JSON.stringify(result, null, 2) : engine.format(result);
