@@ -47,14 +47,6 @@ approve 或 revise
 
 **Skill/Subagent 成功执行绝不意味着下一阶段可以自动开始。每个阶段都必须经过用户明确审批。**
 
-### CLI 执行环境说明
-
-Claude Code 当前对插件 `bin/` 目录中的命令存在已知识别问题。即使 `dev-workflow` 已在插件的 `bin/` 和 `package.json` 中正确配置，也可能出现裸命令无法执行的情况。
-
-因此，**不要将 `dev-workflow` 裸命令是否能直接在 PATH 中执行，与 workflow 是否可用混为一谈。** 当执行 `dev-workflow` 出现 `command not found`、`not found` 或类似错误时，应确认仓库实际的 CLI 入口（`bin/`、`package.json` 的 `bin` 配置或项目已有的本地执行方式），并使用仓库已有的本地入口执行 CLI，而不是自行重新实现 workflow 状态逻辑。
-
-CLI 返回的 `command`、workflow ID、action ID 和参数仍然是状态权威，不得自行修改其语义。如果当前环境没有可用的 CLI 执行入口，应将问题报告为 **CLI 执行入口问题**，不要伪造状态、跳过阶段或要求用户手动推进。
-
 ## CLI 命令协议
 
 CLI 会生成完整的可执行命令，并提前解析 workflow 所需的值。
@@ -65,37 +57,6 @@ CLI 响应包含 `command` 字段时，必须原样执行。
 
 唯一例外是明确标记的用户输入占位符，例如 Review 澄清答案或修订反馈。只能替换该占位符。
 
-## CLI 可执行文件与 `bin/` 命令的重要约束
-
-**特别注意：Claude Code 可能无法直接识别插件仓库 `bin/` 目录中的命令。不要把 `bin/` 中定义的命令是否存在于当前 shell 的 `PATH` 作为 workflow CLI 可用性的判断依据。**
-
-### 强制规则
-
-1. **不要假设 `dev-workflow` 已经全局安装。** 即使 CLI 文档、workflow 响应或示例中出现 `dev-workflow ...`，也不能因此假设当前 Claude Code 会话可以直接执行 `dev-workflow`。
-2. **优先使用仓库实际提供的 CLI 入口。** 如果裸命令出现 `command not found`、`not found` 或 Claude 无法识别，应检查项目中的 `bin/`、`package.json` 的 `bin` 配置以及实际 CLI 入口，然后使用项目支持的本地执行方式。
-3. **不要因为裸命令不可识别就认为 workflow 不可用。** `bin/` 命令无法直接进入 PATH 是执行环境问题，不是 workflow 状态机失败。
-4. **CLI 生成的 workflow 命令仍然是状态权威。** 对命令中的 workflow ID、action ID、参数和状态，不得自行修改；只能解决“如何让当前环境执行该 CLI”这一层的入口问题。
-5. **不要要求用户手动重复执行 CLI 来推进流程。** 如果能够通过项目本地入口执行，就由 Orchestrator 在当前环境中完成执行，并继续读取 CLI 返回结果。
-6. 如果仓库提供 npm/package 脚本或明确的本地 CLI 入口，**优先使用仓库已有入口，不要自行重新实现 CLI 逻辑。**
-
-### 推荐排查顺序
-
-```text
-裸命令不可执行
-      ↓
-检查 bin/ 与 package.json
-      ↓
-确认仓库实际 CLI 入口
-      ↓
-使用仓库支持的本地执行方式
-      ↓
-读取 CLI 返回的 JSON / command
-      ↓
-继续 workflow
-```
-
-**核心原则：workflow 命令的“语义和参数”由 CLI 决定；CLI 的“本地启动入口”由仓库实际配置决定。两者必须区分。**
-
 ## 启动 Workflow
 
 初始 workflow ID 来自调用方或 workflow 创建结果，因此第一次查询可以是：
@@ -105,8 +66,6 @@ dev-workflow next --id <initial-workflow-id> --json
 ```
 
 之后优先使用 CLI 返回的命令。永远不要自行推断下一阶段。
-
-如果 CLI 没有全局安装，直接使用仓库中的可执行文件。
 
 ## workflow.action
 
