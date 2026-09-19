@@ -5,6 +5,8 @@ const { initialState, transition, STAGES, getExecutionConfig } = require('./work
 
 class WorkflowEngine {
   constructor(store) { this.store = store; }
+  projectArg() { return ` --project-dir "${this.store.root.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
+  command(command) { return `${command}${this.projectArg()}`; }
   async run(args) {
     switch (args.command) {
       case 'init': return this.init(args);
@@ -74,8 +76,8 @@ class WorkflowEngine {
         result: { status: 'success | failed', artifact: artifactPath }
       },
       completion: {
-        command: `dev-workflow result --id ${state.workflowId} --action ${actionId} --status success --artifact ${artifactPath}`,
-        failureCommand: `dev-workflow result --id ${state.workflowId} --action ${actionId} --status failed`
+        command: this.command(`dev-workflow result --id ${state.workflowId} --action ${actionId} --status success --artifact ${artifactPath}`),
+        failureCommand: this.command(`dev-workflow result --id ${state.workflowId} --action ${actionId} --status failed`)
       }
     };
   }
@@ -114,7 +116,7 @@ class WorkflowEngine {
     if (current.status === 'failed') {
       return {
         type: 'workflow.retry_required', workflowId: state.workflowId, stage, status: current.status,
-        actions: { retry: { command: `dev-workflow retry --id ${state.workflowId}` } }
+        actions: { retry: { command: this.command(`dev-workflow retry --id ${state.workflowId}`) } }
       };
     }
 
@@ -151,7 +153,7 @@ class WorkflowEngine {
     });
     return {
       type: 'workflow.clarification.accepted', workflowId: state.workflowId, stage: state.currentStage,
-      decision: state.clarification.decisions.at(-1), next: { command: `dev-workflow next --id ${state.workflowId}` }
+      decision: state.clarification.decisions.at(-1), next: { command: this.command(`dev-workflow next --id ${state.workflowId}`) }
     };
   }
   result(args) {
