@@ -216,7 +216,19 @@ Specify 成功时，`Open Questions` 必须为空或明确写为 `None`。
 
 如果用户尚未回答必要决策，应继续澄清，不得返回成功。只有真正发生阻止 Skill 完成的执行问题时才能返回 `failed`。
 
-## Workflow 审批是独立步骤
+## Feishu Review
+
+Specify 生成 `specify.md` 后，不要等待用户审批再同步。先按照 `dev-workflow` 返回的 `workflow.publish_required`，使用 `lark-doc` 将当前 `specify.md` 创建为一个**新的**飞书文档，并通过 CLI 的 `publishCommand` 持久化 `document_id`、`url` 和版本号。
+
+后续审批时，用户可以选择“根据飞书评论修改”。此时：
+
+1. 使用 action.input.review.document 指向的上一版本飞书文档。
+2. 通过 `lark-doc` / `lark-drive` 获取该文档评论；如评论带有正文位置，优先利用评论与正文 block 的关联定位修改范围。
+3. 将评论理解为用户 Review 意见，修改当前 `specify.md`，不要修改历史飞书文档。
+4. 完成修改后正常执行 action 的 `completion.command`。
+5. CLI 会要求再次发布，此时必须创建新的飞书文档版本，而不是覆盖上一版本。
+
+飞书文档是 Review 界面；本地 `.dev/workflows/<workflow-id>/artifacts/specify.md` 是当前规格说明的 source of truth。
 
 不要混淆 Specify 内部的需求澄清与 workflow 级别的审批。
 
