@@ -32,7 +32,13 @@ workflow.action
  ↓
 执行 CLI 提供的 completion.command
  ↓
-执行 CLI 提供的 next.command
+workflow.publish_required
+ ↓
+使用 lark-doc 将 Markdown 创建为**新的**飞书文档
+ ↓
+执行 CLI 提供的 publishCommand，持久化 document_id + url + version
+ ↓
+执行返回的 next.command
  ↓
 workflow.approval_required
  ↓
@@ -45,7 +51,30 @@ approve 或 revise
 进入下一个 workflow.action
 ```
 
-**Skill/Subagent 成功执行绝不意味着下一阶段可以自动开始。每个阶段都必须经过用户明确审批。**
+**Skill/Subagent 成功执行绝不意味着下一阶段可以自动开始。每个阶段都必须先发布当前 Markdown artifact，再经过用户明确审批。**
+
+## Feishu Artifact 版本化协作
+
+每个阶段成功生成 Markdown 后，必须立即进入 `workflow.publish_required`。使用 `lark-doc` 能力把当前 artifact 创建为一个**新的**飞书文档，禁止覆盖历史文档。
+
+发布后，CLI 会将版本信息持久化到当前 stage：
+
+- `version`
+- `documentId`
+- `url`
+- `createdAt`
+- `basedOnVersion`
+
+本地 Workflow State 是版本索引和 source of truth；飞书文档是用户 Review 界面。不要把飞书文档 URL 当作唯一状态来源。
+
+### 发布规则
+
+1. 读取 `workflow.publish_required`。
+2. 使用 `lark-doc` 从 `artifact` 创建新的 Feishu Docx 文档；不要调用 update 覆盖已有文档。
+3. 创建成功后，从返回结果读取 `document_id` 和 `url`。
+4. 原样执行 CLI 返回的 `publishCommand`，只替换 `<document-id>` 与 `<document-url>`。
+5. 执行返回的 `next.command`。
+6. 只有 CLI 返回 `workflow.approval_required` 后，才向用户展示审批选项。
 
 ## CLI 命令协议
 
@@ -225,14 +254,25 @@ CLI 返回 `workflow.approval_required` 时，这是强制的人机协作暂停�
 
 等待用户回答。
 
-### 用户选择 Approve
+### 用户选择 Continue / Approve
 
 1. 执行 CLI 返回的 `actions.approve.command`。
 2. 检查 CLI 响应。
 3. 执行 CLI 提供的 `next` 命令。
 4. 只有 CLI 返回下一个 `workflow.action` 后才能继续。
 
-### 用户选择 Revise
+### 用户选择根据飞书评论修改
+
+1. 执行 CLI 返回的 `actions.commentReview.command`。
+2. 执行返回的 `next` command。
+3. CLI 会返回一个带 `review.mode=feishu_comments` 的新 `workflow.action`。
+4. 使用 `review.document.documentId` 对应的**上一版本飞书文档**作为 Review 来源，通过 `lark-doc` / `lark-drive` 获取该版本的评论。
+5. 将用户评论映射到当前 Markdown artifact，按评论修改内容；不要直接修改历史飞书文档。
+6. 修改完成后执行原 action 的 `completion.command`。
+7. 再次执行 `next`，创建下一版本飞书文档。
+8. 新版本创建成功后再次进入审批门禁。
+
+### 用户选择直接修改
 
 1. 收集修订反馈。
 2. 执行 CLI 返回的 `actions.revise.command`，只替换明确的用户反馈占位符。
@@ -295,6 +335,7 @@ Orchestrator 不得：
 - 直接修改 `.dev/workflows/<id>/state.json`
 - 自动批准阶段
 - 在审批或 Review 决策门禁处跳过 AskUserQuestion
+- 覆盖已有飞书文档作为新的 Artifact 版本
 - 在等待用户输入时继续
 - 隐藏 Subagent 失败
 - 将完整 Subagent 推理输出到主上下文
