@@ -1,7 +1,7 @@
 'use strict';
 
 const STAGES = ['specify', 'design', 'tasks', 'implement', 'review'];
-const VALID_STAGE_STATUSES = ['pending', 'ready', 'running', 'completed', 'failed', 'waiting_approval'];
+const VALID_STAGE_STATUSES = ['pending', 'ready', 'running', 'publishing', 'completed', 'failed', 'waiting_approval'];
 const CLARIFICATION_STAGES = ['specify', 'design'];
 
 // The CLI declares how a stage should be executed; it never dispatches agents itself.
@@ -35,7 +35,7 @@ function getExecutionConfig(stage) {
 
 function initialState(workflowId, request) {
   const stages = Object.fromEntries(STAGES.map((stage, index) => [stage, {
-    status: index === 0 ? 'ready' : 'pending', attempt: 0, artifact: null, feedback: null
+    status: index === 0 ? 'ready' : 'pending', attempt: 0, artifact: null, feedback: null, publication: { currentVersion: 0, versions: [] }
   }]));
   return {
     version: '1.0', workflowId, request, status: 'running', currentStage: 'specify',
@@ -88,11 +88,38 @@ function transition(state, event, payload = {}) {
     if (!state.currentAction || state.currentAction.id !== payload.actionId) throw Object.assign(new Error('Action ID does not match the current action'), { code: 'ACTION_MISMATCH' });
     if (current.status !== 'running') throw Object.assign(new Error(`Stage ${stage} is not running`), { code: 'STAGE_NOT_RUNNING' });
     if (payload.status === 'success') {
-      current.status = 'waiting_approval';
+      current.status = 'publishing';
       current.artifact = payload.artifacts?.[0]?.path || payload.artifact || null;
       if (current.artifact) state.artifacts.push({ stage, path: current.artifact });
       if (CLARIFICATION_STAGES.includes(stage)) state.clarification.status = 'completed';
     } else current.status = 'failed';
+    return;
+  }
+  if (event === 'publish') {
+    if (current.status !== 'publishing') throw Object.assign(new Error(`Stage ${stage} is not waiting for publication`), { code: 'NOT_PUBLISHING' });
+    if (!payload.documentId || !payload.url) throw Object.assign(new Error('publish requires --document-id and --url'), { code: 'INVALID_ARGUMENTS' });
+    const publication = current.publication || { currentVersion: 0, versions: [] };
+    const version = publication.currentVersion + 1;
+    const record = {
+      version,
+      documentId: payload.documentId,
+      url: payload.url,
+      createdAt: new Date().toISOString(),
+      basedOnVersion: publication.currentVersion || null
+    };
+    publication.currentVersion = version;
+    publication.versions.push(record);
+    current.publication = publication;
+    current.status = 'waiting_approval';
+    return;
+  }
+  if (event === 'comment_review') {
+    if (current.status !== 'waiting_approval') throw Object.assign(new Error(`Stage ${stage} is not awaiting approval`), { code: 'NOT_AWAITING_APPROVAL' });
+    if (!current.publication?.currentVersion) throw Object.assign(new Error(`Stage ${stage} has no published Feishu document`), { code: 'NO_FEISHU_PUBLICATION' });
+    current.status = 'ready';
+    current.feedback = `Review comments from Feishu document version ${current.publication.currentVersion}`;
+    current.reviewSource = current.publication.versions.at(-1);
+    state.currentAction = null;
     return;
   }
   if (event === 'approve') {
