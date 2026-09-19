@@ -35,7 +35,7 @@ class WorkflowEngine {
     if (!branch) throw Object.assign(new Error('Workflow requires a named git branch; detached HEAD is not supported'), { code: 'GIT_BRANCH_REQUIRED' });
     const state = initialState(branch, args.request, branch);
     this.store.create(state);
-    return { type: 'workflow.created', workflowId: state.workflowId, status: state.status, currentStage: state.currentStage };
+    return {\n      type: 'workflow.created',\n      workflowId: state.workflowId,\n      status: state.status,\n      currentStage: state.currentStage,\n      next: { command: this.command(`dev-workflow next --id ${state.workflowId}`) }\n    };
   }
   load(args) {
     const id = this.id(args);
@@ -69,7 +69,7 @@ class WorkflowEngine {
       clarification: clarificationEnabled ? {
         enabled: true,
         purpose: stage === 'review' ? 'record review finding fix/skip decisions' : 'record unresolved decisions',
-        recordCommand: `dev-workflow clarify --id ${state.workflowId} --question-id "<question-id>" --question "<question>" --choice "<choice>" --answer "<user-answer>"`
+        recordCommand: this.command(`dev-workflow clarify --id ${state.workflowId} --question-id "<question-id>" --question "<question>" --choice "<choice>" --answer "<user-answer>"`
       } : { enabled: false },
       expectedOutput: {
         artifact: artifactPath,
@@ -106,9 +106,9 @@ class WorkflowEngine {
         artifact: current.artifact,
         publication: current.publication?.versions.at(-1) || null,
         actions: {
-          approve: { command: `dev-workflow approve --id ${state.workflowId}` },
+          approve: { command: this.command(`dev-workflow approve --id ${state.workflowId}`) },
           revise: { command: `dev-workflow revise --id ${state.workflowId} --feedback "<user-feedback>"` },
-          commentReview: { command: `dev-workflow comment-review --id ${state.workflowId}` }
+          commentReview: { command: this.command(`dev-workflow comment-review --id ${state.workflowId}`) }
         }
       };
     }
@@ -166,7 +166,7 @@ class WorkflowEngine {
     return {
       type: 'workflow.result.accepted', workflowId: state.workflowId, stage: state.currentStage,
       status: state.stages[state.currentStage].status, artifacts,
-      next: { command: `dev-workflow next --id ${state.workflowId}` }
+      next: { command: this.command(`dev-workflow next --id ${state.workflowId}`) }
     };
   }
   publish(args) {
