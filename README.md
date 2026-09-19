@@ -60,6 +60,13 @@ dev-workflow result \
   --status success \
   --artifact .dev/workflows/add-modal/artifacts/specify.md
 
+dev-workflow publish \
+  --id add-modal \
+  --document-id FEISHU_DOCUMENT_ID \
+  --url FEISHU_DOCUMENT_URL
+
+dev-workflow comment-review --id add-modal
+
 dev-workflow next --id add-modal --json
 dev-workflow approve --id add-modal
 dev-workflow revise --id add-modal --feedback "Support ESC to close"
@@ -137,7 +144,26 @@ State is stored project-locally under `.dev/workflows/<workflow-id>/`.
 specify -> design -> tasks -> implement -> review
 ```
 
-Each successful stage enters `waiting_approval`. The next stage starts only after `approve`. Failed stages require `retry`; user changes use `revise`.
+Each successful stage follows:
+
+```text
+artifact.md
+   ↓
+workflow.publish_required
+   ↓
+create NEW Feishu document
+   ↓
+persist version + document_id + url
+   ↓
+waiting_approval
+   ├─ Continue
+   ├─ Direct modify
+   └─ Pull Feishu comments → modify artifact → create next Feishu version
+```
+
+Feishu documents are immutable workflow review snapshots. A new artifact version always creates a new Feishu document; historical documents are never overwritten. Local workflow state stores the persistent mapping between artifact versions and Feishu document IDs/URLs.
+
+Each successful stage enters `waiting_approval` only after its artifact has been published. The next stage starts only after `approve`. Failed stages require `retry`; user changes use `revise` or the Feishu comment review loop.
 
 ## Development
 
