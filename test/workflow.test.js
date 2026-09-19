@@ -114,8 +114,12 @@ test('result tells the LLM to call next so the CLI remains the workflow driver',
     artifact: '.dev/workflows/demo/artifacts/specify.md'
   });
 
-  assert.equal(result.status, 'waiting_approval');
+  assert.equal(result.status, 'publishing');
   assert.equal(result.next.command, 'dev-workflow next --id demo');
+
+  const publish = await engine.run({ command: 'publish', id: 'demo', 'document-id': 'doxcn_v1', url: 'https://feishu.cn/docx/doxcn_v1' });
+  assert.equal(publish.type, 'workflow.published');
+  assert.equal(publish.publication.version, 1);
 
   const approval = await engine.run({ command: 'next', id: 'demo' });
   assert.equal(approval.type, 'workflow.approval_required');
@@ -226,4 +230,52 @@ test('review action declares parallel subagent execution', async () => {
     'architecture-review',
     'stability-review'
   ]);
+});
+
+
+test('successful artifact must be published as an immutable Feishu document before approval', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+  await engine.run({ command: 'init', name: 'demo', request: 'Add Modal' });
+  const action = await engine.run({ command: 'next', id: 'demo' });
+  await engine.run({ command: 'result', id: 'demo', action: action.id, status: 'success', artifact: '.dev/workflows/demo/artifacts/specify.md' });
+
+  const publish1 = await engine.run({ command: 'publish', id: 'demo', 'document-id': 'doc_v1', url: 'https://feishu.cn/docx/doc_v1' });
+  assert.equal(publish1.publication.version, 1);
+
+  const approval = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(approval.type, 'workflow.approval_required');
+  assert.equal(approval.actions.commentReview.command, 'dev-workflow comment-review --id demo');
+
+  const state = await engine.run({ command: 'status', id: 'demo' });
+  assert.equal(state.stages.specify.publication.versions.length, 1);
+  assert.equal(state.stages.specify.publication.versions[0].documentId, 'doc_v1');
+});
+
+test('Feishu comment review creates a new artifact publication version', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-workflow-'));
+  const engine = new WorkflowEngine(new WorkflowStore(root));
+  await engine.run({ command: 'init', name: 'demo', request: 'Add Modal' });
+  const action1 = await engine.run({ command: 'next', id: 'demo' });
+  await engine.run({ command: 'result', id: 'demo', action: action1.id, status: 'success', artifact: '.dev/workflows/demo/artifacts/specify.md' });
+  await engine.run({ command: 'publish', id: 'demo', 'document-id': 'doc_v1', url: 'https://feishu.cn/docx/doc_v1' });
+
+  const approval = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(approval.type, 'workflow.approval_required');
+
+  const review = await engine.run({ command: 'comment-review', id: 'demo' });
+  assert.equal(review.type, 'workflow.comment_review_requested');
+
+  const action2 = await engine.run({ command: 'next', id: 'demo' });
+  assert.equal(action2.stage, 'specify');
+  assert.equal(action2.review.mode, 'feishu_comments');
+  assert.equal(action2.review.document.documentId, 'doc_v1');
+
+  await engine.run({ command: 'result', id: 'demo', action: action2.id, status: 'success', artifact: '.dev/workflows/demo/artifacts/specify.md' });
+  await engine.run({ command: 'publish', id: 'demo', 'document-id': 'doc_v2', url: 'https://feishu.cn/docx/doc_v2' });
+
+  const state = await engine.run({ command: 'status', id: 'demo' });
+  assert.equal(state.stages.specify.publication.currentVersion, 2);
+  assert.deepEqual(state.stages.specify.publication.versions.map(v => v.documentId), ['doc_v1', 'doc_v2']);
+  assert.equal(state.stages.specify.publication.versions[1].basedOnVersion, 1);
 });
