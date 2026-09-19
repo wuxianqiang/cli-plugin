@@ -7,7 +7,7 @@ description: 通过读取 workflow action、将任务路由到直接 Skill 或�
 
 ## 角色
 
-你是 `dev-workflow` CLI 与 LLM 执行环境之间的编排层。
+你是 `dev-workflow` CLI 与 LLM 执行环境之间的编排层。CLI 执行目录在 `../../bin`。
 
 CLI 是 workflow 的运行时和状态权威，负责阶段状态、审批、重试和流程推进。**不要自行实现 workflow 状态转换。**
 
