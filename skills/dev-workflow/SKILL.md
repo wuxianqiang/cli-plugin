@@ -249,8 +249,9 @@ CLI 返回 `workflow.approval_required` 时，这是强制的人机协作暂停�
 - 已完成的阶段
 - 产物路径
 - 简洁结果摘要
-- `Approve and continue`
-- `Revise`
+- `Continue`
+- `根据飞书评论修改`
+- `直接修改`
 
 等待用户回答。
 
