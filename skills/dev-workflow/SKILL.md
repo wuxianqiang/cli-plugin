@@ -88,11 +88,17 @@ CLI 响应包含 `command` 字段时，必须原样执行。
 
 ## 启动 Workflow
 
-初始 workflow ID 来自调用方或 workflow 创建结果，因此第一次查询可以是：
+Workflow 必须绑定**当前项目**，不能绑定插件安装目录。Claude Code 插件的执行目录可能是插件自身目录，因此不要依赖 `pwd` 或插件目录来判断项目分支。
+
+初始化时必须使用 Claude Code 提供的 `${CLAUDE_PROJECT_DIR}` 作为项目根目录：
 
 ```bash
-dev-workflow next --id <initial-workflow-id> --json
+dev-workflow init --project-dir "${CLAUDE_PROJECT_DIR}" --request "<request>"
 ```
+
+CLI 会在该项目根目录执行 `git branch --show-current`，并将结果作为 Workflow ID。之后 CLI 返回的所有 continuation command 都已经携带正确的 `--project-dir`，必须原样执行。
+
+如果当前项目处于 detached HEAD，CLI 会拒绝创建 workflow。
 
 之后优先使用 CLI 返回的命令。永远不要自行推断下一阶段。
 
