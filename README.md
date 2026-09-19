@@ -44,7 +44,7 @@ The protocol is intentionally loop-based: **`next` gets an action, the LLM execu
 ## Commands
 
 ```bash
-dev-workflow init --name add-modal --request "Add a reusable Modal component"
+dev-workflow init --request "<request>"
 dev-workflow next --id add-modal --json
 
 dev-workflow clarify \
@@ -173,3 +173,10 @@ Node.js >= 20. No runtime dependencies.
 npm test
 node bin/dev-workflow.js init --name demo --request "Add a Modal"
 ```
+
+
+### Workflow ID
+
+Workflow ID is now the current git branch name. `dev-workflow init` no longer accepts or requires a workflow name. For example, on branch `feature/add-modal`, the workflow ID is `feature/add-modal`. The CLI URL-safe encodes the branch name only when using it as a local filesystem directory, while the original branch name remains the persisted `workflowId`.
+
+Detached HEAD is not supported because a workflow must be associated with a stable branch.
