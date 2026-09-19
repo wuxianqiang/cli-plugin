@@ -1,5 +1,6 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 const { initialState, transition, STAGES, getExecutionConfig } = require('./workflow');
 
 class WorkflowEngine {
@@ -22,8 +23,15 @@ class WorkflowEngine {
   }
   id(args) { return args.id || args.workflow || args.name; }
   init(args) {
-    if (!args.name || !args.request) throw Object.assign(new Error('init requires --name and --request'), { code: 'INVALID_ARGUMENTS' });
-    const state = initialState(args.name, args.request);
+    if (!args.request) throw Object.assign(new Error('init requires --request'), { code: 'INVALID_ARGUMENTS' });
+    let branch;
+    try {
+      branch = execFileSync('git', ['branch', '--show-current'], { cwd: this.store.root, encoding: 'utf8' }).trim();
+    } catch (error) {
+      throw Object.assign(new Error('Unable to determine current git branch'), { code: 'GIT_BRANCH_UNAVAILABLE', cause: error });
+    }
+    if (!branch) throw Object.assign(new Error('Workflow requires a named git branch; detached HEAD is not supported'), { code: 'GIT_BRANCH_REQUIRED' });
+    const state = initialState(branch, args.request, branch);
     this.store.create(state);
     return { type: 'workflow.created', workflowId: state.workflowId, status: state.status, currentStage: state.currentStage };
   }
@@ -35,7 +43,7 @@ class WorkflowEngine {
   buildAction(state, stage, actionId) {
     const current = state.stages[stage];
     const execution = getExecutionConfig(stage);
-    const artifactPath = `.dev/workflows/${state.workflowId}/artifacts/${stage}.md`;
+    const artifactPath = `.dev/workflows/${encodeURIComponent(state.workflowId)}/artifacts/${stage}.md`;
     const clarificationEnabled = ['specify', 'design', 'review'].includes(stage);
     return {
       type: 'workflow.action',
